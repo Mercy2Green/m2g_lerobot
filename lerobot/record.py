@@ -36,6 +36,8 @@ python -m lerobot.record \
 ```
 """
 
+# python -m lerobot.record  --srobot.type=koch_follower  --srobot.port=/ttyUSB0    --teleop.type=koch_leader   --teleop.port=/ttyUSB1  --dataset.repo_id=hpx/cube1  --dataset.root=/media/hpx/newMemery/datasets/cube7  --dataset.push_to_hub=False   --dataset.num_episodes=100  --dataset.single_task="Grab the pink cube and put it in the box"
+
 from rtde_control import RTDEControlInterface  # 机械臂控制[1](@ref)
 from rtde_receive import RTDEReceiveInterface 
 import rtde_control
@@ -83,7 +85,7 @@ from lerobot.common.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
 )
-from lerobot.common.robots.UR5e_follower import URRobotLeRobot
+#from lerobot.common.robots.UR5e_follower import URRobotLeRobot
 from lerobot.common.teleoperators.VR import VR_leader  # noqa: F401
 from lerobot.common.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -110,8 +112,9 @@ from lerobot.common.utils.utils import (
 from lerobot.common.utils.visualization_utils import _init_rerun
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
-from demo_can import hand_control,hand_start,hand_read,write6
+from demo_modbus import hand_control,hand_start,hand_read
 import socket
+from scipy.spatial.transform import Rotation as R
 
 def is_port_in_use(ip, port):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -201,7 +204,6 @@ class VuerTeleop:
         self.tv = OpenTeleVision(self.resolution_cropped, self.shm.name, image_queue, toggle_streaming, ngrok=False)
         self.processor = VuerPreprocessor()
         self.old_hand_pose = [1000, 1000, 1000, 1000, 1000, 1000]  # 初始化手部姿态
-        self.old_arm_pose = []
         # 设置重定向配置
         RetargetingConfig.set_default_urdf_dir('/home/hpx/vla/src/lerobot/lerobot/assets')
         with Path(config_file_path).open('r') as f:
@@ -233,12 +235,36 @@ class VuerTeleop:
         left_qpos = self.left_retargeting.retarget(left_hand_mat[tip_indices])[[4, 5, 6, 7, 10, 11, 8, 9, 0, 1, 2, 3]]
         right_qpos = self.right_retargeting.retarget(right_hand_mat[tip_indices])[[4, 5, 6, 7, 10, 11, 8, 9, 0, 1, 2, 3]]
 
-        return head_rmat, left_pose, right_pose, left_qpos, right_qpos
-    
+        return head_rmat, left_pose, right_pose, left_qpos, right_qpos,right_wrist_mat
+    def correct_quaternion_and_get_rotvec(self,q_original):
+        """
+        修正坐标系反向问题并返回旋转向量
+        :param q_original: 原始四元数 [w, x, y, z]
+        :return: UR RTDE兼容的旋转向量 [Rx, Ry, Rz]（弧度制）
+        """
+        # 1. 构建绕Z轴180°的修正四元数
+        #q_z180 = np.array([0, 0, 0, 0])  # [w=0, x=0, y=0, z=1]
+        
+        # 2. 四元数乘法：q_corrected = q_z180 * q_original
+    #    r_orig = R.from_quat(q_original)
+        #r_z180 = R.from_quat(q_z180)
+        #r_corrected = r_z180 * r_orig  # 组合旋转
+        #rotvec = r_corrected.as_rotvec()
+    #    rotvec = r_orig.as_rotvec()
+        rota1 = R.from_matrix(q_original[:3, :3])
+        r_z90 = R.from_rotvec([-np.pi / 2, 0, 0])  # 绕 Z 轴旋转
+        # 3. 组合旋转矩阵
+        r_combined = r_z90 * rota1  # 注意旋转的顺序
+        # 4. 将组合后的旋转矩阵转换回旋转向量
+        combined_rotvec = r_combined.as_rotvec()
+        combined_rotvec[0] = - combined_rotvec[0]
+        combined_rotvec[2] = - combined_rotvec[2]
+        return combined_rotvec
     def get_old_action(self):
         if self.start_flag1 == 0:
-            head_rmat, left_pose, right_pose, left_qpos, right_qpos = self.step()
-            old_pose = right_pose.copy()
+            head_rmat, left_pose, right_pose, left_qpos, right_qpos ,right_wrist_mat= self.step()
+            old_quat = self.correct_quaternion_and_get_rotvec(right_wrist_mat)
+            old_pose = [right_pose[0],right_pose[1],right_pose[2],old_quat[0],old_quat[1],old_quat[2]]
             joint_pos, old_tcp_pose = self.robot2.read()
             self.start_flag1 = 1
             return old_pose, old_tcp_pose
@@ -283,108 +309,41 @@ class VuerTeleop:
         int(mapped_second_part[0])
         ]
         return result
-    def move_safety(self, target_tcp):
-        joint_pos, tcp_pose = self.robot2.read()
-        delta = np.abs(np.array(tcp_pose[:3]) - np.array(target_tcp[:3]))
-        over_limit = delta > 0.4
-        axis = ['x', 'y', 'z']
-        if np.any(over_limit):
-            for i, flag in enumerate(over_limit):
-                if flag:
-                    print(f"{axis[i]} 方向移动超过0.3米，无法移动")
-                    #head_rmat, left_pose, right_pose, left_qpos, right_qpos = self.step()
-                    # for i in range(3):
-                    #     self.old_pose[i] = right_pose[i]
-            return False
-        delta1 = np.abs(np.array(tcp_pose[-3:]) - np.array(target_tcp[-3:]))
-        over_limit = delta1 > 2
-        axis = ['x', 'y', 'z']
-        if np.any(over_limit):
-            for i, flag in enumerate(over_limit):
-                if flag:
-                    print(f"{axis[i]} 旋转方向角度移动过大，无法移动")
-                    # head_rmat, left_pose, right_pose, left_qpos, right_qpos = self.step()
-                    # for i in range(3):
-                    #     self.old_pose[i] = right_pose[i]  # 更新旧位姿
-            return False
-        #self.move_to_tcp(target_tcp)
-        return True
-        #time.sleep(0.1)  # 等待机械臂运动完成
-    def get_action(self, events, old_control):
-        """
-        获取当前的操作动作。
-        
-        Returns:
-            dict: 包含头部旋转矩阵、左右手位姿和关节角的字典。
-        """
-        '''
+    def get_action(self, events):
         if self.start_flag1 == 0:
             self.old_pose, self.old_tcp_pose = self.get_old_action()
-        head_rmat, left_pose, right_pose, left_qpos, right_qpos = self.step()
-
+            self.pre_pose = self.old_pose
         joint_pos, tcp_pose = self.robot2.read()
-
+        head_rmat, left_pose, right_pose, left_qpos, right_qpos,right_wrist_mat = self.step()
         new_tcp_pose = list(tcp_pose)
-        new_tcp_pose[0] = self.old_tcp_pose[0] + (self.old_pose[0] - right_pose[0]) * 1.5  # x方向
-        new_tcp_pose[1] = self.old_tcp_pose[1] + (self.old_pose[1] - right_pose[1]) * 1.5  # y方向
-        new_tcp_pose[2] = self.old_tcp_pose[2] - (self.old_pose[2] - right_pose[2]) * 1.5 # z方向
-        if new_tcp_pose[1] > (self.old_tcp_pose[1] + 0.2):
-            new_tcp_pose[1] = self.old_tcp_pose[1] + 0.1
-        if new_tcp_pose[1] < (self.old_tcp_pose[1] - 1):
-            new_tcp_pose[1] = self.old_tcp_pose[1] - 1     
-        if new_tcp_pose[0] > (self.old_tcp_pose[0] + 0.8):
-            new_tcp_pose[0] = self.old_tcp_pose[0] + 0.8
-        if new_tcp_pose[0] < (self.old_tcp_pose[0] - 0.6):
-            new_tcp_pose[0] = self.old_tcp_pose[0] - 0.6  
-        if new_tcp_pose[2] < 0.05:
-            new_tcp_pose[2] = 0.1
-
-        new_tcp_pose[3] = self.old_tcp_pose[3]+ round(random.uniform(-0.1, 0.1), 3) * 0.25
-        new_tcp_pose[4] = self.old_tcp_pose[4]+ round(random.uniform(-0.1, 0.1), 3) * 0.25
-        new_tcp_pose[5] = self.old_tcp_pose[5]+ round(random.uniform(-0.1, 0.1), 3) * 0.25
-        print(f'Old TCP Pose: {self.old_tcp_pose}')
-        print(f'New TCP Pose111: {new_tcp_pose}')
-        #robot.move_safety(new_tcp_pose)
-        # start = self.move_safety(new_tcp_pose)
-        # if start is False:
-        #     print("安全检查失败，无法移动")
-        #     return None                '''
-        if self.start_flag1 == 0:
-            self.old_pose, self.old_tcp_pose = self.get_old_action()
-        joint_pos, tcp_pose = self.robot2.read()
-        new_control = [0,0,0,0,0,0,0,0] 
-        for i in range(8):
-            new_control[i] = events["control"][i] - old_control[i]
-        new_tcp_pose = list(tcp_pose)
-        new_tcp_pose[0] = tcp_pose[0] + (new_control[1] - new_control[0]) * 0.01 # x方向
-        new_tcp_pose[1] = tcp_pose[1] + (new_control[3] - new_control[2]) * 0.01
-        new_tcp_pose[2] = tcp_pose[2] + (new_control[4] - new_control[5]) * 0.01
-        for i in range(3):
-            if new_tcp_pose[i] - tcp_pose[i] > 0.2:
-                new_tcp_pose[i] = tcp_pose[i] + 0.2
-                print(f"new_tcp_pose[{i}] 超过0.2，已调整为 {new_tcp_pose[i]}")
-            elif new_tcp_pose[i] - tcp_pose[i] < -0.2:
-                new_tcp_pose[i] = tcp_pose[i] - 0.2
-                print(f"new_tcp_pose[{i}] 超过-0.2，已调整为 {new_tcp_pose[i]}")
-        if new_tcp_pose[1] > (self.old_tcp_pose[1] + 0.2):
-            new_tcp_pose[1] = self.old_tcp_pose[1] + 0.1
-        if new_tcp_pose[1] < (self.old_tcp_pose[1] - 1):
-            new_tcp_pose[1] = self.old_tcp_pose[1] - 1     
-        if new_tcp_pose[0] > (self.old_tcp_pose[0] + 0.8):
-            new_tcp_pose[0] = self.old_tcp_pose[0] + 0.8
-        if new_tcp_pose[0] < (self.old_tcp_pose[0] - 0.6):
-            new_tcp_pose[0] = self.old_tcp_pose[0] - 0.6  
-        if new_tcp_pose[2] < 0.05:
-            new_tcp_pose[2] = 0.1
-
-        new_tcp_pose[3] = self.old_tcp_pose[3]+ round(random.uniform(-0.1, 0.1), 3) * 0.25
-        new_tcp_pose[4] = self.old_tcp_pose[4]+ round(random.uniform(-0.1, 0.1), 3) * 0.25
-        new_tcp_pose[5] = self.old_tcp_pose[5]+ round(random.uniform(-0.1, 0.1), 3) * 0.25
+        if (right_pose[0]-self.pre_pose[0]) > 0.001 or (right_pose[1]-self.pre_pose[1]) > 0.001 or (right_pose[2]-self.pre_pose[2]) > 0.001:
+            new_tcp_pose[0] = tcp_pose[0] - (right_pose[0] - self.old_pose[0]) * 0.5 # x方向
+            new_tcp_pose[1] = tcp_pose[1] - (right_pose[1] - self.old_pose[1]) * 0.5
+            new_tcp_pose[2] = tcp_pose[2] + (right_pose[2] - self.old_pose[2]) * 0.5
+        self.pre_pose = right_pose
+        if new_tcp_pose[1] > (self.old_tcp_pose[1] + 0.15):
+            new_tcp_pose[1] = self.old_tcp_pose[1] + 0.15
+            print(f"new_tcp_pose[1] 超过0.5，已调整为 {new_tcp_pose[1]}")
+        if new_tcp_pose[1] < (self.old_tcp_pose[1] - 0.16):
+            new_tcp_pose[1] = self.old_tcp_pose[1] - 0.16     
+            print(f"new_tcp_pose[1] 超过-0.5，已调整为 {new_tcp_pose[1]}")
+        if new_tcp_pose[0] > (self.old_tcp_pose[0] + 0.4):
+            new_tcp_pose[0] = self.old_tcp_pose[0] + 0.4
+            print(f"new_tcp_pose[0] 超过0.4，已调整为 {new_tcp_pose[0]}")
+        if new_tcp_pose[0] < (self.old_tcp_pose[0] - 0.4):
+            new_tcp_pose[0] = self.old_tcp_pose[0] - 0.4  
+            print(f"new_tcp_pose[0] 超过-0.4，已调整为 {new_tcp_pose[0]}")
+        if (new_tcp_pose[0] < (self.old_tcp_pose[0] - 0.05)) and (new_tcp_pose[1] > (self.old_tcp_pose[1] + 0.12)):
+            new_tcp_pose[1] = (self.old_tcp_pose[1] + 0.12)
+            print(f"new_tcp_pose[0] 和 new_tcp_pose[1] 超过限制，已调整为, {new_tcp_pose[1]}")
+        if new_tcp_pose[2] < 0.10:
+            new_tcp_pose[2] = 0.10
+        if new_tcp_pose[2] > 0.25:
+            new_tcp_pose[2] = 0.25
+        quat = right_pose[3:7]  # x, y, z, w
+        new_quat = [quat[3], -quat[0], -quat[1], quat[2]]
         current_q = joint_pos  # 返回当前6个关节角的列表
-        velocity = 0.2
-        acceleration = 0.5
-        # self.robot2.robot1.moveL(new_tcp_pose, speed = velocity, acceleration=acceleration, asynchronous=False)
-        final_joint = self.robot2.robot1.getInverseKinematics(
+        final_joint = self.robot1.getInverseKinematics(
             new_tcp_pose,          # 第一个参数必须是目标位姿列表，不可用target_pose=
             current_q,              # 第二个参数为q_near列表，不可为None
             max_position_error=10, 
@@ -394,30 +353,9 @@ class VuerTeleop:
             final_joint[3] = -0.6
         elif final_joint[3] < -3.6:
             final_joint[3] = -3.5
-        #final_joint = current_q
-        #print(f'Final Joint: {final_joint}')
-        '''
-        if not events["start_hand"]:
-            #self.keyboard_listener.hand_start = False
-            hand_pose = self.old_hand_pose
-            self.old_arm_pose = final_joint.copy()
 
-        elif events["start_hand"]:
-            print("手部动作开始88888888888888888888888888888888888888888888888888888888888888888888888888")
-            hand_pose = self.get_handpose(right_qpos)
-            self.old_hand_pose = hand_pose
-            head_rmat, left_pose, right_pose, left_qpos, right_qpos = self.step()
-            self.old_pose = right_pose.copy()
-            final_joint = self.old_arm_pose.copy()          '''
-        if events["control"][6] >= 1:
-            print("手部抓取动作开始")
-            hand_pose = [0,0,0,0,500,500]
-            events["control"][6] = 0
-        elif events["control"][7] >= 1:
-            print("手部放开动作开始")
-            hand_pose = [1000,1000,1000,1000,500,500]
-            events["control"][7] = 0              
-        print(f'control signal:66666666666666: {new_control}')                
+        hand_pose = self.get_handpose(right_qpos)
+        #print(f'control signal:66666666666666: {new_control}')                
         action = {
             "joint_1.pos": final_joint[0],
             "joint_2.pos": final_joint[1],
@@ -425,6 +363,12 @@ class VuerTeleop:
             "joint_4.pos": final_joint[3],
             "joint_5.pos": final_joint[4],
             "joint_6.pos": final_joint[5],
+            "tcp_1.pos": new_tcp_pose[0],
+            "tcp_2.pos": new_tcp_pose[1],
+            "tcp_3.pos": new_tcp_pose[2],
+            "tcp_4.pos": new_tcp_pose[3],
+            "tcp_5.pos": new_tcp_pose[4],
+            "tcp_6.pos": new_tcp_pose[5],
             "hand_1.pos": hand_pose[0],
             "hand_2.pos": hand_pose[1],
             "hand_3.pos": hand_pose[2],
@@ -445,13 +389,13 @@ class DatasetRecordConfig:
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
     root: str | Path | None = None
     # Limit the frames per second.
-    fps: int = 60
+    fps: int = 30
     # Number of seconds for data recording for each episode.
     episode_time_s: int | float = 60
     # Number of seconds for resetting the environment after each episode.
     reset_time_s: int | float = 60
     # Number of episodes to record.
-    num_episodes: int = 20
+    num_episodes: int = 50
     # Encode frames in the dataset into video
     video: bool = True
     # Upload dataset to Hugging Face hub.
@@ -536,9 +480,8 @@ def record_loop(
         if events["exit_early"]:
             events["exit_early"] = False
             break
-        #start_time = time.perf_counter()
+
         observation = robot.get_observation()
-        #print(f"获取观察数据耗时: {time.perf_counter() - start_time:.4f} 秒")
         #hand_pose = [observation[f"hand_{i+1}.pos"] for i in range(6)]
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
@@ -553,11 +496,8 @@ def record_loop(
                 robot_type=robot.robot_type,
             )
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
-        elif policy is None:
-            #start_time = time.perf_counter()
-            action = robot.get_action(events,old_control)
-            #print(f"获取action耗时: {time.perf_counter() - start_time:.4f} 秒")
-            old_control = events["control"]
+        elif policy is None and teleop is not None:
+            action = teleop.get_action(events)
             if action is None:
                 logging.info("Teleoperator returned None action, skipping this loop iteration.")
                 continue
@@ -571,15 +511,13 @@ def record_loop(
 
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset.
-        #start_time = time.perf_counter()
         sent_action = robot.send_action(action)
-        #print(f"发送动作耗时: {time.perf_counter() - start_time:.4f} 秒")
-        #start_time = time.perf_counter()
+
         if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")
             frame = {**observation_frame, **action_frame}
             dataset.add_frame(frame, task=single_task)
-        #print(f"保存数据耗时: {time.perf_counter() - start_time:.4f} 秒")
+
         if display_data:
             for obs, val in observation.items():
                 if isinstance(val, float):
@@ -597,7 +535,7 @@ def record_loop(
 
 
 @parser.wrap()
-def record(cfg: RecordConfig,robot2,listener, events) -> LeRobotDataset:
+def record(cfg: RecordConfig,teleop,listener, events) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
@@ -605,9 +543,10 @@ def record(cfg: RecordConfig,robot2,listener, events) -> LeRobotDataset:
 
     #robot = make_robot_from_config(cfg.robot)
     #robot = URRobotLeRobot()
-    robot = robot2
+    
     #teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
-    teleop = None
+    teleop = teleop
+    robot = teleop.robot2
     action_features = hw_to_dataset_features(robot.action_features, "action", cfg.dataset.video)
     obs_features = hw_to_dataset_features(robot.observation_features, "observation", cfg.dataset.video)
     dataset_features = {**action_features, **obs_features}
@@ -670,7 +609,7 @@ def record(cfg: RecordConfig,robot2,listener, events) -> LeRobotDataset:
             log_say("Reset the environment", cfg.play_sounds)
             print("Reset the environment9999999999999999999999999999999999999999999")
             events["control"] = [0, 0, 0, 0, 0, 0, 0, 0]
-            joint_pos = [-0.7, -1.8, -2.1, -2.37, -0.7, -0.1]
+            joint_pos = [0, -2.1, -2, -2.1, 0, 0]
             robot.robot1.moveJ(joint_pos, 0.3, 0.5, False)
             record_loop(
                 robot=robot,
@@ -709,12 +648,18 @@ def record(cfg: RecordConfig,robot2,listener, events) -> LeRobotDataset:
 
 
 if __name__ == "__main__":
-    robot1= URRobotLeRobot()
-    #teleoperator = VuerTeleop('/home/hpx/vla/src/lerobot/lerobot/inspire_hand.yml')
-    #robot1 = teleoperator.robot2
+    #robot1= URRobotLeRobot()
+    teleoperator = VuerTeleop('/home/hpx/vla/src/lerobot/lerobot/inspire_hand.yml')
+    #ser = hand_start()
+    robot1 = teleoperator.robot2
     # keyboard_listener = KeyboardListener()
     # keyboard_listener.start_listening()
+
     listener, events = init_keyboard_listener()
+    joint_pos = [-0.6, -1.8, -2.1, -2.37, -0.6, -0.1]
+    #joint_pos, tcp_pose = robot1.read()
+    #joint_pos[4] += 0.3
+    robot1.robot1.moveJ(joint_pos, 0.3, 0.5, False)
     # robot_ip = "192.168.31.2"
     # rtde_port = 30004
     # if is_port_in_use(robot_ip, rtde_port):
@@ -738,37 +683,27 @@ if __name__ == "__main__":
                 arm_pose = tcp_pose.copy()
                 arm_pose[2] -= 0.2
                 #joint_pos[3] +=  -0.4
-                #joint_pos = [0, -2.1, -2, -2.1, 0, 0]
-                joint_pos = [-0.6, -1.8, -2.1, -2.37, -0.6, -0.1]
+                joint_pos = [0, -2.1, -2, -2.1, 0, 0]
                 robot1.robot1.moveJ(joint_pos, 0.3, 0.5, False)
                 #robot.move_safety(arm_pose)
                 #time.sleep(1)
-                # hand_targets = [1000, 1000, 1000, 1000, 1000, 500]  # 手部目标位置
-                # result = hand_control(self.ser1,hand_targets)
-                #break
+                break
             
             if events["start_record"] and start_flag == 0:
                 start_flag = 1
             
             else:
-                joint_pos, tcp_pose = robot1.read()
-                # print(f"当前关节角度: {joint_pos}")
-                print(f"当前TCP位姿: {tcp_pose}")
-                # tcp = [0.45, -0.23, 0.03, 1.5692098537490884, -0.06472226082896908, 0.06965037143778885]
-                # robot1.robot1.moveL(tcp, speed=0.1, acceleration=0.5, asynchronous=False)
-                joint_pos = [-0.6, -1.8, -2.1, -2.37, -0.6, -0.1]
-                #joint_pos[3] = joint_pos[3] + 0.1
-                robot1.robot1.moveJ(joint_pos, 0.3, 0.5, False)
                 print("机器人未启动，等待按 'z' 键...")
-                #break
+                
+                #robot1.robot1.moveL(target_tcp, speed=0.1, acceleration=0.5 asynchronous=False)
             # 获取当前帧的头部和手部数据
             if start_flag == 0:
-                joint_pos, tcp_pose = robot1.read()
-                print(f"当前关节角度: {joint_pos}")
-                print(f"当前TCP位姿: {tcp_pose}")
-                #print(events["control"])
-                # head_rmat, left_pose, right_pose, left_qpos, right_qpos = teleoperator.step()
-                # print(f'Right Hand Pose: {right_pose}')
+                # joint_pos, tcp_pose = robot1.read()
+                # print(f"当前关节角度: {joint_pos}")
+                # print(f"当前TCP位姿: {tcp_pose}")
+                head_rmat, left_pose, right_pose, left_qpos, right_qpos ,right_wrist_mat= teleoperator.step()
+                print(f'Right Hand Pose: {right_pose[3:7]}')
+
                 # print(f'计数数据：{events["w_count"]}')
             elif start_flag == 1:
                 time.sleep(2)  # 等待一段时间以确保数据稳定
@@ -776,9 +711,32 @@ if __name__ == "__main__":
                 #head_rmat, left_pose, right_pose, left_qpos, right_qpos = teleoperator.step()
                # global old_pose = right_pose.copy()
             elif start_flag == 2:
-                #record(teleop=teleoperator,listener = listener, events=events)
-                record(robot2 = robot1,listener = listener, events=events)
-                break
+                record(teleop = teleoperator,listener = listener, events=events)
+
+                #head_rmat, left_pose, right_pose, left_qpos, right_qpos,right_wrist_mat = teleoperator.step()
+                #rota1 = R.from_matrix(right_wrist_mat[:3, :3]).as_rotvec()
+                # rota1 = R.from_matrix(right_wrist_mat[:3, :3])
+                # r_z90 = R.from_rotvec([-np.pi / 2, 0, 0])  # 绕 Z 轴旋转
+                # # 3. 组合旋转矩阵
+                # r_combined = r_z90 * rota1  # 注意旋转的顺序
+                # # 4. 将组合后的旋转矩阵转换回旋转向量
+                # combined_rotvec = r_combined.as_rotvec()
+                # #print(f"捕捉的手部旋转向量：{combined_rotvec}")
+                # hands = teleoperator.get_handpose(right_qpos)
+                # action = teleoperator.get_action(events)
+                # #time.sleep(0.3)
+                # #action = robot1.get_action(events)
+                # rota2 = [action["tcp_1.pos"],action["tcp_2.pos"],action["tcp_3.pos"]]
+                # rota3 = right_pose[:3]
+                # #print(f"机械臂现在的旋转：{rota2}")
+                # tcp_targets = [action[f"tcp_{i+1}.pos"] for i in range(6)]
+                # velocity = 0.3
+                # acceleration = 1
+                # robot1.robot1.moveL(tcp_targets, velocity, acceleration, False)
+                #time.sleep(0.5)
+                
+                #hand_control(ser,hands)
+                #break
             #time.sleep(0.5)
     # keyboard_listener = KeyboardListener()
     # keyboard_listener.start_listening()
