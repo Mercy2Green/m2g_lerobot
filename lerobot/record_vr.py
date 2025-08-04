@@ -365,8 +365,6 @@ class VuerTeleop:
             "hand_5.pos": hand_pose[4],
             "hand_6.pos": hand_pose[5],
         }
-
-
         return action
         
 @dataclass
