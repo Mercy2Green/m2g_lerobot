@@ -34,6 +34,8 @@ from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.robots import Robot
 
 
+######键盘相关的文件。
+
 def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
     log_items = []
     if episode_index is not None:
@@ -148,7 +150,7 @@ def init_keyboard_listener():
     events["start_record"] = False
     events["restart_arm"] = False
     events["quit"] = False
-    events["control"] = [0,0,0,0,0,0,0,0]   
+    events["control"] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0]   
     key_last_time = [0.0]  # 使用列表以便闭包可修改
     w_key_interval = 0.005  # 0.1秒
     key_lock = threading.Lock()
@@ -180,7 +182,7 @@ def init_keyboard_listener():
                 if key.char == 'x' or key.char == 'X':
                     print("R key pressed. Start hand control...")
                     events["restart_arm"] = True
-                    events["control"] = [0, 0, 0, 0, 0, 0, 0, 0]
+                    events["control"] = [0, 0, 0, 0, 0, 0, 0, 0,0,0,0,0,0,0]
                 elif key.char == 'z' or key.char == 'Z':
                     print("A key pressed. Record start...")
                     events["start_record"] = True
@@ -236,6 +238,46 @@ def init_keyboard_listener():
                         if now - key_last_time[0] >= w_key_interval:
                             events["control"][7] += (now - key_last_time[0]) // w_key_interval
                             key_last_time[0] = now
+                elif key.char == 't' or key.char == 'T' or key.char.lower() == 't':
+                    now = time.monotonic()
+                    with key_lock:
+                        if now - key_last_time[0] >= w_key_interval:
+                            events["control"][8] += (now - key_last_time[0]) // w_key_interval
+                            key_last_time[0] = now
+                elif key.char == 'g' or key.char == 'G' or key.char.lower() == 'g':
+                    now = time.monotonic()
+                    with key_lock:
+                        if now - key_last_time[0] >= w_key_interval:
+                            events["control"][9] += (now - key_last_time[0]) // w_key_interval
+                            key_last_time[0] = now
+                elif key.char == 'y' or key.char == 'Y' or key.char.lower() == 'y':
+                    now = time.monotonic()
+                    with key_lock:
+                        if now - key_last_time[0] >= w_key_interval:
+                            events["control"][10] += (now - key_last_time[0]) // w_key_interval
+                            key_last_time[0] = now
+                elif key.char == 'h' or key.char == 'H' or key.char.lower() == 'h':
+                    now = time.monotonic()
+                    with key_lock:
+                        if now - key_last_time[0] >= w_key_interval:
+                            events["control"][11] += (now - key_last_time[0]) // w_key_interval
+                            key_last_time[0] = now
+                elif key.char == 'u' or key.char == 'U' or key.char.lower() == 'u':
+                    now = time.monotonic()
+                    with key_lock:
+                        if now - key_last_time[0] >= w_key_interval:
+                            events["control"][12] += (now - key_last_time[0]) // w_key_interval
+                            key_last_time[0] = now
+                elif key.char == 'j' or key.char == 'J' or key.char.lower() == 'j':
+                    now = time.monotonic()
+                    with key_lock:
+                        if now - key_last_time[0] >= w_key_interval:
+                            events["control"][13] += (now - key_last_time[0]) // w_key_interval
+                            key_last_time[0] = now
+                elif key.char == 'c' or key.char == 'C' or key.char.lower() == 'c':
+                    now = time.monotonic()
+                    with key_lock:
+                        key_last_time[0] = now
         except Exception as e:
             print(f"Error handling key press: {e}")
 
