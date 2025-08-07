@@ -182,6 +182,16 @@ class DexHandClient:
             "forces": forces,      # 有符号力值
             "tactile": tactile     # dict[str, np.ndarray]
         }
+    
+    def set_hand_angle(self, angles):
+        """
+        设置手部角度
+        :param angles: 长度为6的列表或数组，表示每个关节的角度
+        """
+        if len(angles) != 6:
+            raise ValueError("angles 必须是长度为6的列表")
+        self.write6('angleSet', angles)
+        print(f"已设置手部角度: {angles}")
 
     
 if __name__ == '__main__':

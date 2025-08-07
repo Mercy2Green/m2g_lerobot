@@ -79,7 +79,6 @@ def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, f
     info_str = " ".join(log_items)
     logging.info(info_str)
 
-
 @cache
 def is_headless():
     """Detects if python is running without a monitor."""
@@ -182,7 +181,7 @@ def init_keyboard_listener():
                 if key.char == 'x' or key.char == 'X':
                     print("R key pressed. Start hand control...")
                     events["restart_arm"] = True
-                    events["control"] = [0, 0, 0, 0, 0, 0, 0, 0,0,0,0,0,0,0]
+                    events["control"] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
                 elif key.char == 'z' or key.char == 'Z':
                     print("A key pressed. Record start...")
                     events["start_record"] = True

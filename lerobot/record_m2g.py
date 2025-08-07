@@ -49,46 +49,34 @@ python -m lerobot.record  --srobot.type=koch_follower  --srobot.port=/ttyUSB0   
 
 
 ######这个文件负责整个记录流程。相当于导演编剧
-
-from rtde_control import RTDEControlInterface  # 机械臂控制[1](@ref)
-from rtde_receive import RTDEReceiveInterface 
-import rtde_control
-import rtde_receive
+import argparse
 import logging
+import random
+import socket
+import threading
 import time
+import yaml
+
+import cv2
+import numpy as np
+import rerun as rr
+
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
-import numpy as np
-import rerun as rr
-import random
-import threading 
-import cv2  # 摄像头采集
-import threading  # 添加线程支持
-from TeleVision import OpenTeleVision
-from Preprocessor import VuerPreprocessor
-from constants_vuer import tip_indices
-from dex_retargeting.retargeting_config import RetargetingConfig
-from pytransform3d import rotations
-import argparse
-import yaml
 from multiprocessing import Array, Process, shared_memory, Queue, Manager, Event, Semaphore
 from typing import Optional
 
-from lerobot.common.robots.UR5e_follower import URRobotLeRobot  # noqa: F401
-from lerobot.common.robots.ur5e_hand import UR5eHand  # noqa: F401
+from pytransform3d import rotations
+from rtde_control import RTDEControlInterface
+from rtde_receive import RTDEReceiveInterface
 
-from lerobot.common.cameras import (  # noqa: F401
-    CameraConfig,  # noqa: F401
-)
-from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
-from lerobot.common.datasets.image_writer import safe_stop_image_writer
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features
-from lerobot.common.policies.factory import make_policy
-from lerobot.common.policies.pretrained import PreTrainedPolicy
-from lerobot.common.robots import (  # noqa: F401
+from dex_retargeting.retargeting_config import RetargetingConfig
+from constants_vuer import tip_indices
+from Preprocessor import VuerPreprocessor
+from TeleVision import OpenTeleVision
+
+from lerobot.common.robots import (
     Robot,
     RobotConfig,
     koch_follower,
@@ -97,8 +85,8 @@ from lerobot.common.robots import (  # noqa: F401
     so101_follower,
 )
 from lerobot.common.robots.UR5e_follower import URRobotLeRobot
-from lerobot.common.teleoperators.VR import VR_leader  # noqa: F401
-from lerobot.common.teleoperators import (  # noqa: F401
+from lerobot.common.robots.ur5e_hand import UR5eHand
+from lerobot.common.teleoperators import (
     Teleoperator,
     TeleoperatorConfig,
     koch_leader,
@@ -107,6 +95,7 @@ from lerobot.common.teleoperators import (  # noqa: F401
     so101_leader,
     VR_leader,
 )
+from lerobot.common.teleoperators.VR import VR_leader
 from lerobot.common.utils.control_utils import (
     init_keyboard_listener,
     is_headless,
@@ -121,9 +110,19 @@ from lerobot.common.utils.utils import (
     log_say,
 )
 from lerobot.common.utils.visualization_utils import _init_rerun
+
+from lerobot.common.cameras import CameraConfig
+from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCameraConfig
+
+from lerobot.common.datasets.image_writer import safe_stop_image_writer
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features
+
+from lerobot.common.policies.factory import make_policy
+from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
-import socket
 
 def is_port_in_use(ip, port):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -136,233 +135,6 @@ def is_port_in_use(ip, port):
     except Exception as e:
         print(f"Port check error: {e}")
         return False
-
-class VuerTeleop:
-    """
-    负责远程操作手部数据的采集与预处理，包括图像共享内存、预处理、重定向配置等。
-    """
-    def __init__(self, config_file_path):
-        # 原始分辨率
-        self.resolution = (720, 1280)
-        # 裁剪宽高（此处为0，未裁剪）
-        self.crop_size_w = 0
-        self.crop_size_h = 0
-        #self.keyboard_listener = KeyboardListener()
-        #self.keyboard_listener.start_listening()
-        # 裁剪后的分辨率
-        self.resolution_cropped = (self.resolution[0]-self.crop_size_h, self.resolution[1]-2*self.crop_size_w)
-
-        # 图像shape：(高, 2*宽, 3)，左右拼接
-        self.img_shape = (self.resolution_cropped[0], 2 * self.resolution_cropped[1], 3)
-        self.img_height, self.img_width = self.resolution_cropped[:2]
-
-        # 创建共享内存用于图像传递
-        self.shm = shared_memory.SharedMemory(create=True, size=np.prod(self.img_shape) * np.uint8().itemsize)
-        self.img_array = np.ndarray((self.img_shape[0], self.img_shape[1], 3), dtype=np.uint8, buffer=self.shm.buf)
-        image_queue = Queue()
-        toggle_streaming = Event()
-
-        # 初始化视频采集与预处理
-        self.tv = OpenTeleVision(self.resolution_cropped, self.shm.name, image_queue, toggle_streaming, ngrok=False)
-        self.processor = VuerPreprocessor()
-        self.old_hand_pose = [1000, 1000, 1000, 1000, 1000, 1000]  # 初始化手部姿态
-        self.old_arm_pose = []
-        # 设置重定向配置
-        RetargetingConfig.set_default_urdf_dir('/home/hpx/vla/src/lerobot/lerobot/assets')
-        with Path(config_file_path).open('r') as f:
-            cfg = yaml.safe_load(f)
-        left_retargeting_config = RetargetingConfig.from_dict(cfg['left'])
-        right_retargeting_config = RetargetingConfig.from_dict(cfg['right'])
-        self.left_retargeting = left_retargeting_config.build()
-        self.right_retargeting = right_retargeting_config.build()
-        self.start_flag1 = 0
-        #self.robot2 = UR5e_arm(robot1_ip="192.168.31.2")
-        self.robot2 = URRobotLeRobot()
-
-    def step(self):
-        """
-        处理一帧数据，输出头部旋转矩阵、左右手位姿和关节角。
-        """
-        # 处理视频流，获得头部和手部的位姿矩阵
-        head_mat, left_wrist_mat, right_wrist_mat, left_hand_mat, right_hand_mat = self.processor.process(self.tv)
-
-        # 提取头部旋转矩阵
-        head_rmat = head_mat[:3, :3]
-
-        # 计算左手和右手的位姿（位置+四元数），并做平移修正
-        left_pose = np.concatenate([left_wrist_mat[:3, 3] + np.array([-0.6, 0, 1.6]),
-                                    rotations.quaternion_from_matrix(left_wrist_mat[:3, :3])[[1, 2, 3, 0]]])
-        right_pose = np.concatenate([right_wrist_mat[:3, 3] + np.array([-0.6, 0, 1.6]),
-                                     rotations.quaternion_from_matrix(right_wrist_mat[:3, :3])[[1, 2, 3, 0]]])
-        # 通过重定向获得左右手的关节角，并按指定顺序排列
-        left_qpos = self.left_retargeting.retarget(left_hand_mat[tip_indices])[[4, 5, 6, 7, 10, 11, 8, 9, 0, 1, 2, 3]]
-        right_qpos = self.right_retargeting.retarget(right_hand_mat[tip_indices])[[4, 5, 6, 7, 10, 11, 8, 9, 0, 1, 2, 3]]
-
-        return head_rmat, left_pose, right_pose, left_qpos, right_qpos
-    
-    def get_old_action(self):
-        if self.start_flag1 == 0:
-            head_rmat, left_pose, right_pose, left_qpos, right_qpos = self.step()
-            old_pose = right_pose.copy()
-            joint_pos, old_tcp_pose = self.robot2.read()
-            self.start_flag1 = 1
-            return old_pose, old_tcp_pose
-
-    def get_handpose(self,right_qpos):
-        """控制手部动作"""
-        # 这里可以添加手部控制的具体实现
-        selected = [
-            right_qpos[0],   # 1st
-            right_qpos[2],   # 3rd
-            right_qpos[4],   # 5th
-            right_qpos[6],   # 7th
-            right_qpos[8],   # 9th
-            right_qpos[10]   # 11th
-        ]
-        
-        # 映射前4个元素 (1.0-1.7 → 0-1000)
-        mapped_first_part = []
-        for value in selected[:4]:
-            # 线性映射公式：y = (x - min) * (1000/(max-min))
-            mapped_value = 1000 - (value - 1.0) * (1000 / 0.7)
-            # 确保结果在[0,1000]范围内
-            mapped_value = max(0, min(1000, mapped_value))
-            mapped_first_part.append(mapped_value)
-        
-        # 映射后2个元素 (0-0.8 → 0-1000)
-        mapped_second_part = []
-        value = selected[4]  # 5th
-        mapped_value = 1000 - value * (1000 / 1.3)
-        mapped_value = max(0, min(1000, mapped_value))
-        mapped_second_part.append(mapped_value)
-        value = selected[5]  # 5th
-        mapped_value = 1000 - value * (1000 / 0.8)
-        mapped_value = max(0, min(1000, mapped_value))
-        mapped_second_part.append(mapped_value)
-        result = [
-        int(mapped_first_part[2]),
-        int(mapped_first_part[3]),
-        int(mapped_first_part[1]),
-        int(mapped_first_part[0]),
-        int(mapped_second_part[1]),
-        int(mapped_second_part[0])
-        ]
-        return result
-    def move_safety(self, target_tcp):
-        joint_pos, tcp_pose = self.robot2.read()
-        delta = np.abs(np.array(tcp_pose[:3]) - np.array(target_tcp[:3]))
-        over_limit = delta > 0.4
-        axis = ['x', 'y', 'z']
-        if np.any(over_limit):
-            for i, flag in enumerate(over_limit):
-                if flag:
-                    print(f"{axis[i]} 方向移动超过0.3米，无法移动")
-                    #head_rmat, left_pose, right_pose, left_qpos, right_qpos = self.step()
-                    # for i in range(3):
-                    #     self.old_pose[i] = right_pose[i]
-            return False
-        delta1 = np.abs(np.array(tcp_pose[-3:]) - np.array(target_tcp[-3:]))
-        over_limit = delta1 > 2
-        axis = ['x', 'y', 'z']
-        if np.any(over_limit):
-            for i, flag in enumerate(over_limit):
-                if flag:
-                    print(f"{axis[i]} 旋转方向角度移动过大，无法移动")
-                    # head_rmat, left_pose, right_pose, left_qpos, right_qpos = self.step()
-                    # for i in range(3):
-                    #     self.old_pose[i] = right_pose[i]  # 更新旧位姿
-            return False
-        #self.move_to_tcp(target_tcp)
-        return True
-        #time.sleep(0.1)  # 等待机械臂运动完成
-    def get_action(self, events, old_control):
-
-        if self.start_flag1 == 0:
-            self.old_pose, self.old_tcp_pose = self.get_old_action()
-        joint_pos, tcp_pose = self.robot2.read()
-        new_control = [0,0,0,0,0,0,0,0] 
-        for i in range(8):
-            new_control[i] = events["control"][i] - old_control[i]
-        new_tcp_pose = list(tcp_pose)
-        new_tcp_pose[0] = tcp_pose[0] + (new_control[1] - new_control[0]) * 0.01 # x方向
-        new_tcp_pose[1] = tcp_pose[1] + (new_control[3] - new_control[2]) * 0.01
-        new_tcp_pose[2] = tcp_pose[2] + (new_control[4] - new_control[5]) * 0.01
-        for i in range(3):
-            if new_tcp_pose[i] - tcp_pose[i] > 0.2:
-                new_tcp_pose[i] = tcp_pose[i] + 0.2
-                print(f"new_tcp_pose[{i}] 超过0.2，已调整为 {new_tcp_pose[i]}")
-            elif new_tcp_pose[i] - tcp_pose[i] < -0.2:
-                new_tcp_pose[i] = tcp_pose[i] - 0.2
-                print(f"new_tcp_pose[{i}] 超过-0.2，已调整为 {new_tcp_pose[i]}")
-        if new_tcp_pose[1] > (self.old_tcp_pose[1] + 0.2):
-            new_tcp_pose[1] = self.old_tcp_pose[1] + 0.1
-        if new_tcp_pose[1] < (self.old_tcp_pose[1] - 1):
-            new_tcp_pose[1] = self.old_tcp_pose[1] - 1     
-        if new_tcp_pose[0] > (self.old_tcp_pose[0] + 0.8):
-            new_tcp_pose[0] = self.old_tcp_pose[0] + 0.8
-        if new_tcp_pose[0] < (self.old_tcp_pose[0] - 0.6):
-            new_tcp_pose[0] = self.old_tcp_pose[0] - 0.6  
-        if new_tcp_pose[2] < 0.05:
-            new_tcp_pose[2] = 0.1
-
-        new_tcp_pose[3] = self.old_tcp_pose[3]+ round(random.uniform(-0.1, 0.1), 3) * 0.25
-        new_tcp_pose[4] = self.old_tcp_pose[4]+ round(random.uniform(-0.1, 0.1), 3) * 0.25
-        new_tcp_pose[5] = self.old_tcp_pose[5]+ round(random.uniform(-0.1, 0.1), 3) * 0.25
-        current_q = joint_pos  # 返回当前6个关节角的列表
-        velocity = 0.2
-        acceleration = 0.5
-        # self.robot2.robot1.moveL(new_tcp_pose, speed = velocity, acceleration=acceleration, asynchronous=False)
-        final_joint = self.robot2.robot1.getInverseKinematics(
-            new_tcp_pose,          # 第一个参数必须是目标位姿列表，不可用target_pose=
-            current_q,              # 第二个参数为q_near列表，不可为None
-            max_position_error=10, 
-            max_orientation_error=10
-        )
-        if final_joint[3] > -0.5:
-            final_joint[3] = -0.6
-        elif final_joint[3] < -3.6:
-            final_joint[3] = -3.5
-        #final_joint = current_q
-        #print(f'Final Joint: {final_joint}')
-        '''
-        if not events["start_hand"]:
-            #self.keyboard_listener.hand_start = False
-            hand_pose = self.old_hand_pose
-            self.old_arm_pose = final_joint.copy()
-
-        elif events["start_hand"]:
-            print("手部动作开始88888888888888888888888888888888888888888888888888888888888888888888888888")
-            hand_pose = self.get_handpose(right_qpos)
-            self.old_hand_pose = hand_pose
-            head_rmat, left_pose, right_pose, left_qpos, right_qpos = self.step()
-            self.old_pose = right_pose.copy()
-            final_joint = self.old_arm_pose.copy()          '''
-        if events["control"][6] >= 1:
-            print("手部抓取动作开始")
-            hand_pose = [0,0,0,0,500,500]
-            events["control"][6] = 0
-        elif events["control"][7] >= 1:
-            print("手部放开动作开始")
-            hand_pose = [1000,1000,1000,1000,500,500]
-            events["control"][7] = 0              
-        print(f'control signal:66666666666666: {new_control}')                
-        action = {
-            "joint_1.pos": final_joint[0],
-            "joint_2.pos": final_joint[1],
-            "joint_3.pos": final_joint[2],
-            "joint_4.pos": final_joint[3],
-            "joint_5.pos": final_joint[4],
-            "joint_6.pos": final_joint[5],
-            "hand_1.pos": hand_pose[0],
-            "hand_2.pos": hand_pose[1],
-            "hand_3.pos": hand_pose[2],
-            "hand_4.pos": hand_pose[3],
-            "hand_5.pos": hand_pose[4],
-            "hand_6.pos": hand_pose[5],
-        }
-
-
-        return action
         
 @dataclass
 class DatasetRecordConfig:
@@ -452,9 +224,6 @@ def record_loop(
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
-    # if policy is given it needs cleaning up
-    # if policy is not None:
-    #     policy.reset()
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
@@ -478,9 +247,7 @@ def record_loop(
             )
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
         elif policy is None:
-            #start_time = time.perf_counter()
             action = robot.get_action(events)
-            #print(f"获取action耗时: {time.perf_counter() - start_time:.4f} 秒")
             old_control = events["control"]
             if action is None:
                 logging.info("Teleoperator returned None action, skipping this loop iteration.")
@@ -503,12 +270,12 @@ def record_loop(
         if display_data:
             for obs, val in observation.items():
                 if isinstance(val, float):
-                    rr.log(f"observation.{obs}", rr.Scalar(val))
+                    rr.log(f"observation.{obs}", rr.Scalars(val))
                 elif isinstance(val, np.ndarray):
                     rr.log(f"observation.{obs}", rr.Image(val), static=True)
             for act, val in action.items():
                 if isinstance(val, float):
-                    rr.log(f"action.{act}", rr.Scalar(val))
+                    rr.log(f"action.{act}", rr.Scalars(val))
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
@@ -517,7 +284,7 @@ def record_loop(
 
 
 @parser.wrap()
-def record(cfg: RecordConfig,robot,listener, events) -> LeRobotDataset:
+def record(cfg: RecordConfig,robot: UR5eHand,listener, events) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
@@ -560,6 +327,20 @@ def record(cfg: RecordConfig,robot,listener, events) -> LeRobotDataset:
     robot.connect()
 
     recorded_episodes = 0
+
+    # while 还没录完:
+    # ├─ 调用 record_loop()         ← 正式采集一个 episode
+    # │
+    # ├─ if 还没采完 or 需要重录:    ← 判断是否 reset
+    # │    ├─ 手动 reset 环境
+    # │    └─ 再次调用 record_loop() ← reset 时间（不保存数据）
+    # │
+    # ├─ if 需要重录当前 episode:    ← 用户主动触发事件
+    # │    ├─ 清空当前 buffer
+    # │    └─ continue 回到 while 起点
+    # │
+    # └─ 正常保存 episode，计数 +1
+
     while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
         log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
         record_loop(
@@ -580,9 +361,10 @@ def record(cfg: RecordConfig,robot,listener, events) -> LeRobotDataset:
             (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
         ):
             log_say("Reset the environment", cfg.play_sounds)
-            print("Reset the environment9999999999999999999999999999999999999999999")
-            events["control"] = [0, 0, 0, 0, 0, 0, 0, 0,0,0,0,0,0,0]
-            joint_pos = [-1.2, -1.6716, -1.5113, -3.71581, -1.29335, -2.890]
+            events["control"] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+            joint_pos = robot.init_arm_pose
+
             robot.robot1.moveJ(joint_pos, 0.3, 0.5, False)
             record_loop(
                 robot=robot,
@@ -606,15 +388,13 @@ def record(cfg: RecordConfig,robot,listener, events) -> LeRobotDataset:
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 
+    robot.hand.close()
     robot.disconnect()
-    # if teleop is not None:
-    #     teleop.disconnect()
+    if teleop is not None:
+        teleop.disconnect()
 
     if not is_headless() and listener is not None:
         listener.stop()
-
-    # if cfg.dataset.push_to_hub:
-    #     dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
 
     log_say("Exiting", cfg.play_sounds)
     return dataset
@@ -628,15 +408,15 @@ if __name__ == "__main__":
             hand_ip="192.168.11.210",
             hand_port=6000,
             init_force_values=[100, 100, 100, 100, 100, 100],
-            init_speed_values=[500, 500, 500, 500, 500, 500]
+            init_speed_values=[500, 500, 500, 500, 500, 500],
+            init_arm_pose= [-1.2, -1.6716, -1.5113, -3.71581, -1.29335, -2.890]
     )
 
     listener, events = init_keyboard_listener()
-    
-    hand = arm_hand.hand
+
+    # hand = arm_hand.hand
 
     init_joint_pos = [-1.2, -1.6716, -1.5113, -3.71581, -1.29335, -2.890]
-
 
     arm_hand.robot1.moveJ(init_joint_pos, 0.3, 0.5, False)
     start_flag = 0
@@ -644,7 +424,6 @@ if __name__ == "__main__":
         while True:
             if events["stop_recording"]:
                 break
-
             if events["restart_arm"]:
                 print("机器人已重置！")
                 # 重置机器人到初始位置
@@ -667,22 +446,26 @@ if __name__ == "__main__":
             elif start_flag == 2:
 
                 ######  用来记录
-                record(robot2 = arm_hand,listener = listener, events=events)
+                record(robot = arm_hand,listener = listener, events=events)
                 ######  用来记录
 
                 ####### 用来测试
-                # action = robot1.get_action(events)
+                # action = arm_hand.get_action(events)
                 # tcp_targets = [action[f"tcp_{i+1}.pos"] for i in range(6)]
                 # velocity = 0.2
                 # acceleration = 0.3
-                # hands = [action[f"hand_{i+1}.pos"] for i in range(6)]
-                # hand_data = hand_read(ser)
-                # # hands = hand_data[:6]
-                # tac = hand_data[6:12]
-                # print(f"tcp数据:{tcp_targets}")
-                # hand_control
-                # robot1.robot1.moveL(tcp_targets, velocity, acceleration, False)
-                # hand_control(ser,hands)
+                # hands_action_angle = [action[f"hand_{i+1}.pos"] for i in range(6)]
+                # hand_data = arm_hand.hand.read_force_angle_tactile()
+                # hand_force = hand_data["force"]
+                # hand_angle = hand_data["angle"]
+                # hand_tactile = hand_data["tactile"]
+                # print(f"手部力传感器数据: {hand_force}")
+                # print(f"手部角度传感器数据: {hand_angle}")
+                # print(f"手部触觉传感器数据: {hand_tactile}")
+                # print(f"ARM的tcp数据:{tcp_targets}")
+                # arm_hand.robot1.moveL(tcp_targets, velocity, acceleration, False)
+                # # hand_control(ser,hands)
+                # arm_hand.hand.set_hand_angle(hands_action_angle)
                 ####### 用来测试
 
     except KeyboardInterrupt:
