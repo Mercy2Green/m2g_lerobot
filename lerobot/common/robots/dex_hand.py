@@ -157,7 +157,64 @@ class DexHandClient:
             byte_list.extend([lo, hi])
         return bytes(byte_list)
     
-    def read_all_tactile_sync(self, signed: bool = True) -> dict[str, np.ndarray]:
+    def read_all_tactile_5finger(self) -> dict[str, str]:
+        """
+        读取 5 指触觉手的法向力、法向力变化值、切向力、切向力变化值、切向力方向、接近变化值
+        返回字典: key 为 finger_metric，value 为字符串
+        """
+        finger_names = ["pinky", "ring", "middle", "index", "thumb"]
+        base_addresses = [3000, 3058, 3116, 3174, 3232]
+        byte_per_finger = 58
+        reg_per_finger = byte_per_finger // 2  # 1寄存器 = 2字节
+
+        metrics = [
+            "normal_force",                # 法向力 (float32)
+            "normal_force_delta",           # 法向力变化值 (float32)
+            "tangential_force",             # 切向力 (float32)
+            "tangential_force_delta",       # 切向力变化值 (float32)
+            "tangential_force_direction",   # 切向力方向 (int16)
+            "approach_delta"                # 接近变化值 (float32)
+        ]
+
+        result = {}
+
+        for finger, base_addr in zip(finger_names, base_addresses):
+            regs = self.read_register(base_addr, reg_per_finger) or [0] * reg_per_finger
+            raw_bytes = self._regs_to_bytes(regs)
+
+            offset = 32  # 跳过原始值（8通道×4字节）
+
+            normal_force = str(np.frombuffer(raw_bytes[offset:offset+4], dtype='<f4')[0])
+            offset += 4
+
+            normal_force_delta = str(np.frombuffer(raw_bytes[offset:offset+4], dtype='<f4')[0])
+            offset += 4
+
+            tangential_force = str(np.frombuffer(raw_bytes[offset:offset+4], dtype='<f4')[0])
+            offset += 4
+
+            tangential_force_delta = str(np.frombuffer(raw_bytes[offset:offset+4], dtype='<f4')[0])
+            offset += 4
+
+            tangential_force_direction = str(np.frombuffer(raw_bytes[offset:offset+2], dtype='<i2')[0])
+            offset += 2
+
+            approach_delta = str(np.frombuffer(raw_bytes[offset:offset+4], dtype='<f4')[0])
+            offset += 4
+
+            # 用下划线连接 finger 和 metric
+            result[f"{finger}_normal_force"] = normal_force
+            result[f"{finger}_normal_force_delta"] = normal_force_delta
+            result[f"{finger}_tangential_force"] = tangential_force
+            result[f"{finger}_tangential_force_delta"] = tangential_force_delta
+            result[f"{finger}_tangential_force_direction"] = tangential_force_direction
+            result[f"{finger}_approach_delta"] = approach_delta
+
+        return result
+
+
+    
+    def read_all_tactile_full(self, signed: bool = True) -> dict[str, np.ndarray]:
         """
         按块读取触觉数据（分段读取，每段不足则补零，不等待）。
         :param signed: 是否转为 int16（带符号）
@@ -251,7 +308,7 @@ class DexHandClient:
         forces = [(v - 65536) if v > 32767 else v for v in forces_raw]
 
         # Step 3: 读取触觉（已有复杂逻辑）
-        tactile = self.read_all_tactile_sync()
+        tactile = self.read_all_tactile_5finger()
 
         print(tactile)
 
