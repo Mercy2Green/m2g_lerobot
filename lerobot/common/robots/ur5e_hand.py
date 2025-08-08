@@ -12,7 +12,7 @@ import rtde_control
 import rtde_receive
 import cv2
 from pymodbus.client.sync import ModbusTcpClient  # pip install pymodbus==2.5.3
-from dex_hand import DexHandClient
+from lerobot.common.robots.dex_hand import DexHandClient
 
 
 class UR5eHand:
@@ -234,7 +234,10 @@ class UR5eHand:
         acceleration = 0.5
         self.robot1.moveL(tcp_targets, velocity, acceleration, False)
         #self.robot1.moveJ(joint_targets, velocity, acceleration, False)
-        result = hand_control(self.ser1,hand_targets)  # 控制手指动作
+
+        # result = hand_control(self.hand,hand_targets)  # 控制手指动作
+        self.hand.set_hand_angle(hand_targets)
+
         # 返回实际执行的动作
         return action
 
@@ -260,12 +263,26 @@ class UR5eHand:
         new[3] = new_control[1]
         '''
         new_control = new
-        
+
+        # 统一的位移缩放系数（米）
+        MOVE_SCALE = 0.01  #越大越快，越小越精细
+
+        # 各方向正反向增益
+        GAIN_X_POS = 20    # X正向（new_control[0]）
+        GAIN_X_NEG = 20     # X反向（new_control[1]）
+
+        GAIN_Y_POS = 20    # Y正向（new_control[2]）
+        GAIN_Y_NEG = 20     # Y反向（new_control[3]）
+
+        GAIN_Z_UP   = 20   # Z上升（new_control[4]）
+        GAIN_Z_DOWN = 20    # Z下降（new_control[5]）
+
+        # 计算新的 TCP 位置
         new_tcp_pose = list(tcp_pose)
-        new_tcp_pose[0] = tcp_pose[0] - (new_control[0]*10 - new_control[1]*10) * 0.01 # x方向
-        new_tcp_pose[1] = tcp_pose[1] - (new_control[2]*5 - new_control[3]*5) * 0.01
-        new_tcp_pose[2] = tcp_pose[2] + (new_control[4]*40 - new_control[5]*4) * 0.01
-        #new_tcp_pose[5] = tcp_pose[5] + (new_control[8]*5 - new_control[9]*5) * 0.01
+        new_tcp_pose[0] = tcp_pose[0] - (new_control[0] * GAIN_X_POS - new_control[1] * GAIN_X_NEG) * MOVE_SCALE
+        new_tcp_pose[1] = tcp_pose[1] - (new_control[2] * GAIN_Y_POS - new_control[3] * GAIN_Y_NEG) * MOVE_SCALE
+        new_tcp_pose[2] = tcp_pose[2] + (new_control[4] * GAIN_Z_UP  - new_control[5] * GAIN_Z_DOWN) * MOVE_SCALE
+
         r_current = R.from_rotvec(tcp_pose[3:6])
         theta_x = (new_control[8]*5 - new_control[9]*5) * 0.01 
         theta_y = (new_control[10]*5 - new_control[11]*5) * 0.01 
@@ -296,10 +313,14 @@ class UR5eHand:
         if (new_tcp_pose[0] < (self.old_tcp_pose[0] - 0.05)) and (new_tcp_pose[1] > (self.old_tcp_pose[1] + 0.12)):
             new_tcp_pose[1] = (self.old_tcp_pose[1] + 0.12)
             print(f"new_tcp_pose[0] 和 new_tcp_pose[1] 超过限制，已调整为, {new_tcp_pose[1]}")
-        if new_tcp_pose[2] < 0.03:
-            new_tcp_pose[2] = 0.03
-        if new_tcp_pose[2] > 0.25:
-            new_tcp_pose[2] = 0.25
+
+        max_z = 0.35
+        min_z = 0.03
+        
+        if new_tcp_pose[2] < min_z:
+            new_tcp_pose[2] = min_z
+        if new_tcp_pose[2] > max_z:
+            new_tcp_pose[2] = max_z
 
         current_q = joint_pos  # 返回当前6个关节角的列表
         final_joint = self.robot1.getInverseKinematics(
@@ -337,11 +358,11 @@ class UR5eHand:
             "joint_4.pos": final_joint[3],
             "joint_5.pos": final_joint[4],
             "joint_6.pos": final_joint[5],
-            "tcp_1.pos": new_tcp_pose[0],  # 假设TCP动作
-            "tcp_2.pos": new_tcp_pose[1],  # 假设TCP动作
-            "tcp_3.pos": new_tcp_pose[2],  # 假设TCP动作
-            "tcp_4.pos": new_tcp_pose[3],  # 假设TCP动作
-            "tcp_5.pos": new_tcp_pose[4],  # 假设TCP动作
+            "tcp_1.pos": new_tcp_pose[0],  
+            "tcp_2.pos": new_tcp_pose[1], 
+            "tcp_3.pos": new_tcp_pose[2],  
+            "tcp_4.pos": new_tcp_pose[3],  
+            "tcp_5.pos": new_tcp_pose[4],  
             "tcp_6.pos": new_tcp_pose[5],  
             "hand_1.pos": hand_pose[0],
             "hand_2.pos": hand_pose[1],

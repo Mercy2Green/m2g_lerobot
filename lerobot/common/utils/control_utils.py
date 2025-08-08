@@ -135,6 +135,13 @@ def predict_action(
 
     return action
 
+def handle_key_increment(events, key_index, key_last_time, key_lock, w_key_interval, increment=1):
+    now = time.monotonic()
+    with key_lock:
+        if now - key_last_time[0] >= w_key_interval:
+            events["control"][key_index] += increment
+            key_last_time[0] = now
+
 
 def init_keyboard_listener():
     # Allow to exit early while recording an episode or resetting the environment,
@@ -177,108 +184,53 @@ def init_keyboard_listener():
                 print("Escape key pressed. Stopping data recording...")
                 events["stop_recording"] = True
                 events["exit_early"] = True
-            elif hasattr(key, 'char'):  # 检查是否是字符按键
-                if key.char == 'x' or key.char == 'X':
-                    print("R key pressed. Start hand control...")
+            elif hasattr(key, 'char'):
+                char = key.char.lower()
+
+                if char == 'x':
+                    print("X key pressed. Restart arm...")
                     events["restart_arm"] = True
-                    events["control"] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-                elif key.char == 'z' or key.char == 'Z':
-                    print("A key pressed. Record start...")
+                    events["control"] = [0] * len(events["control"])
+
+                elif char == 'z':
+                    print("Z key pressed. Start recording...")
                     events["start_record"] = True
-                elif key.char == 'w' or key.char == 'W' or key.char.lower() == 'w':
-                    now = time.monotonic()
-                    with key_lock:
-                        if now - key_last_time[0] >= w_key_interval:
-                            events["control"][0] += (now - key_last_time[0]) // w_key_interval
-                            key_last_time[0] = now
-                        # else:
-                        #     start_flag = True
-                        #     key_last_time[0] = now
-                            #print(f"[KeyboardListener] w pressed, count={{events['w_count']}}")
-                elif key.char == 's' or key.char == 'S' or key.char.lower() == 's':
-                    now = time.monotonic()
-                    with key_lock:
-                        if now - key_last_time[0] >= w_key_interval:
-                            events["control"][1] += (now - key_last_time[0]) // w_key_interval
-                            key_last_time[0] = now
-                elif key.char == 'a' or key.char == 'A' or key.char.lower() == 'a':
-                    now = time.monotonic()
-                    with key_lock:
-                        if now - key_last_time[0] >= w_key_interval:
-                            events["control"][2] += (now - key_last_time[0]) // w_key_interval
-                            key_last_time[0] = now
-                elif key.char == 'd' or key.char == 'D' or key.char.lower() == 'd':
-                    now = time.monotonic()
-                    with key_lock:
-                        if now - key_last_time[0] >= w_key_interval:
-                            events["control"][3] += (now - key_last_time[0]) // w_key_interval
-                            key_last_time[0] = now
-                elif key.char == 'q' or key.char == 'Q' or key.char.lower() == 'q':
-                    now = time.monotonic()
-                    with key_lock:
-                        if now - key_last_time[0] >= w_key_interval:
-                            events["control"][4] += (now - key_last_time[0]) // w_key_interval
-                            key_last_time[0] = now
-                elif key.char == 'e' or key.char == 'E' or key.char.lower() == 'e':
-                    now = time.monotonic()
-                    with key_lock:
-                        if now - key_last_time[0] >= w_key_interval:
-                            events["control"][5] += (now - key_last_time[0]) // w_key_interval
-                            key_last_time[0] = now
-                elif key.char == 'r' or key.char == 'R' or key.char.lower() == 'r':
-                    now = time.monotonic()
-                    with key_lock:
-                        if now - key_last_time[0] >= w_key_interval:
-                            events["control"][6] += (now - key_last_time[0]) // w_key_interval
-                            key_last_time[0] = now
-                elif key.char == 'f' or key.char == 'F' or key.char.lower() == 'f':
-                    now = time.monotonic()
-                    with key_lock:
-                        if now - key_last_time[0] >= w_key_interval:
-                            events["control"][7] += (now - key_last_time[0]) // w_key_interval
-                            key_last_time[0] = now
-                elif key.char == 't' or key.char == 'T' or key.char.lower() == 't':
-                    now = time.monotonic()
-                    with key_lock:
-                        if now - key_last_time[0] >= w_key_interval:
-                            events["control"][8] += (now - key_last_time[0]) // w_key_interval
-                            key_last_time[0] = now
-                elif key.char == 'g' or key.char == 'G' or key.char.lower() == 'g':
-                    now = time.monotonic()
-                    with key_lock:
-                        if now - key_last_time[0] >= w_key_interval:
-                            events["control"][9] += (now - key_last_time[0]) // w_key_interval
-                            key_last_time[0] = now
-                elif key.char == 'y' or key.char == 'Y' or key.char.lower() == 'y':
-                    now = time.monotonic()
-                    with key_lock:
-                        if now - key_last_time[0] >= w_key_interval:
-                            events["control"][10] += (now - key_last_time[0]) // w_key_interval
-                            key_last_time[0] = now
-                elif key.char == 'h' or key.char == 'H' or key.char.lower() == 'h':
-                    now = time.monotonic()
-                    with key_lock:
-                        if now - key_last_time[0] >= w_key_interval:
-                            events["control"][11] += (now - key_last_time[0]) // w_key_interval
-                            key_last_time[0] = now
-                elif key.char == 'u' or key.char == 'U' or key.char.lower() == 'u':
-                    now = time.monotonic()
-                    with key_lock:
-                        if now - key_last_time[0] >= w_key_interval:
-                            events["control"][12] += (now - key_last_time[0]) // w_key_interval
-                            key_last_time[0] = now
-                elif key.char == 'j' or key.char == 'J' or key.char.lower() == 'j':
-                    now = time.monotonic()
-                    with key_lock:
-                        if now - key_last_time[0] >= w_key_interval:
-                            events["control"][13] += (now - key_last_time[0]) // w_key_interval
-                            key_last_time[0] = now
-                elif key.char == 'c' or key.char == 'C' or key.char.lower() == 'c':
-                    now = time.monotonic()
-                    with key_lock:
-                        key_last_time[0] = now
+
+                elif char == 'w':
+                    handle_key_increment(events, 0, key_last_time, key_lock, w_key_interval)
+                elif char == 's':
+                    handle_key_increment(events, 1, key_last_time, key_lock, w_key_interval)
+                elif char == 'a':
+                    handle_key_increment(events, 2, key_last_time, key_lock, w_key_interval)
+                elif char == 'd':
+                    handle_key_increment(events, 3, key_last_time, key_lock, w_key_interval)
+                elif char == 'q':
+                    handle_key_increment(events, 4, key_last_time, key_lock, w_key_interval)
+                elif char == 'e':
+                    handle_key_increment(events, 5, key_last_time, key_lock, w_key_interval)
+                elif char == 'r':
+                    handle_key_increment(events, 6, key_last_time, key_lock, w_key_interval)
+                elif char == 'f':
+                    handle_key_increment(events, 7, key_last_time, key_lock, w_key_interval)
+                elif char == 't':
+                    handle_key_increment(events, 8, key_last_time, key_lock, w_key_interval)
+                elif char == 'g':
+                    handle_key_increment(events, 9, key_last_time, key_lock, w_key_interval)
+                elif char == 'y':
+                    handle_key_increment(events, 10, key_last_time, key_lock, w_key_interval)
+                elif char == 'h':
+                    handle_key_increment(events, 11, key_last_time, key_lock, w_key_interval)
+                elif char == 'u':
+                    handle_key_increment(events, 12, key_last_time, key_lock, w_key_interval)
+                elif char == 'j':
+                    handle_key_increment(events, 13, key_last_time, key_lock, w_key_interval)
+                elif char == 'c':
+                    # 更新 key_last_time 但不改变控制状态（例如：用于节奏控制）
+                    key_last_time[0] = time.monotonic()
+
         except Exception as e:
             print(f"Error handling key press: {e}")
+
 
     listener = keyboard.Listener(on_press=on_press)
     listener.start()

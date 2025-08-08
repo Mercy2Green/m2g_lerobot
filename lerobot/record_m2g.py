@@ -18,6 +18,7 @@ export PYTHONPATH=$PYTHONPATH:$(pwd)/install/lib/
 sudo bash ./scripts/install_udev_rules.sh
 sudo udevadm control --reload-rules
 sudo udevadm trigger
+cd /home/hpx/peter_ws/m2g_lerobot/lerobot
 '''
 
 """
@@ -47,25 +48,25 @@ python -m lerobot.record  --srobot.type=koch_follower  --srobot.port=/ttyUSB0   
 ```
 """
 
+# import debugpy
+# debugpy.listen(("0.0.0.0", 2457))  # 监听5678端口
+# print("Waiting for debugger attach...")
+# debugpy.wait_for_client()
 
 ######这个文件负责整个记录流程。相当于导演编剧
-import argparse
 import logging
-import random
-import socket
-import threading
-import time
-import yaml
 
-import cv2
+import socket
+
+import time
+
 import numpy as np
 import rerun as rr
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
-from multiprocessing import Array, Process, shared_memory, Queue, Manager, Event, Semaphore
-from typing import Optional
+
 
 from pytransform3d import rotations
 from rtde_control import RTDEControlInterface
@@ -73,9 +74,6 @@ from rtde_receive import RTDEReceiveInterface
 
 from dex_retargeting.retargeting_config import RetargetingConfig
 from constants_vuer import tip_indices
-from Preprocessor import VuerPreprocessor
-from TeleVision import OpenTeleVision
-
 from lerobot.common.robots import (
     Robot,
     RobotConfig,
@@ -84,7 +82,7 @@ from lerobot.common.robots import (
     so100_follower,
     so101_follower,
 )
-from lerobot.common.robots.UR5e_follower import URRobotLeRobot
+
 from lerobot.common.robots.ur5e_hand import UR5eHand
 from lerobot.common.teleoperators import (
     Teleoperator,
@@ -95,7 +93,6 @@ from lerobot.common.teleoperators import (
     so101_leader,
     VR_leader,
 )
-from lerobot.common.teleoperators.VR import VR_leader
 from lerobot.common.utils.control_utils import (
     init_keyboard_listener,
     is_headless,
@@ -110,10 +107,6 @@ from lerobot.common.utils.utils import (
     log_say,
 )
 from lerobot.common.utils.visualization_utils import _init_rerun
-
-from lerobot.common.cameras import CameraConfig
-from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCameraConfig
 
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -402,13 +395,19 @@ def record(cfg: RecordConfig,robot: UR5eHand,listener, events) -> LeRobotDataset
 
 if __name__ == "__main__":
     
+    init_hand_force = 100
+    init_hand_speed = 1000
+
+    init_hand_force_list = [init_hand_force] * 6
+    init_hand_speed_list = [init_hand_speed] * 6
+
     # robot1= URRobotLeRobot()
     arm_hand = UR5eHand(
             robot_ip="192.168.31.2", 
             hand_ip="192.168.11.210",
             hand_port=6000,
-            init_force_values=[100, 100, 100, 100, 100, 100],
-            init_speed_values=[500, 500, 500, 500, 500, 500],
+            init_force_values=init_hand_force_list,
+            init_speed_values=init_hand_speed_list,
             init_arm_pose= [-1.2, -1.6716, -1.5113, -3.71581, -1.29335, -2.890]
     )
 

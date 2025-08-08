@@ -2,6 +2,7 @@ from pymodbus.client.sync import ModbusTcpClient  # pip install pymodbus==2.5.3
 import time
 import numpy as np
 
+
 class DexHandClient:
     regdict = {
         'ID': 1000,
@@ -131,22 +132,98 @@ class DexHandClient:
         self.write6('speedSet', speed_values)
         print(f"已设置速度值: {speed_values}")
 
-    def read_all_tactile_sync(self) -> dict[str, np.ndarray]:
-        start_address = 3000
-        total_registers = 562
-        all_data = self.read_register(start_address, total_registers)
+    # def read_all_tactile_sync(self) -> dict[str, np.ndarray]:
+    #     start_address = 3000
+    #     total_registers = 562
+    #     all_data = self.read_register(start_address, total_registers)
 
-        if not all_data or len(all_data) < total_registers:
-            raise RuntimeError("触觉数据读取失败或不完整")
+    #     if not all_data or len(all_data) < total_registers:
+    #         raise RuntimeError("触觉数据读取失败或不完整")
 
-        tactile = {}
-        for name, (offset, rows, cols) in self.tactile_parts.items():
-            segment = all_data[offset:offset + rows * cols]
-            matrix = np.array(segment, dtype=np.uint16).reshape((rows, cols))
-            if name == "palm":
-                matrix = matrix[::-1]
-            tactile[name] = matrix
-        return tactile
+    #     tactile = {}
+    #     for name, (offset, rows, cols) in self.tactile_parts.items():
+    #         segment = all_data[offset:offset + rows * cols]
+    #         matrix = np.array(segment, dtype=np.uint16).reshape((rows, cols))
+    #         if name == "palm":
+    #             matrix = matrix[::-1]
+    #         tactile[name] = matrix
+    #     return tactile
+    def _regs_to_bytes(self, regs):
+        """寄存器列表 -> bytes，低位在前"""
+        byte_list = []
+        for reg in regs:
+            lo = reg & 0xFF
+            hi = (reg >> 8) & 0xFF
+            byte_list.extend([lo, hi])
+        return bytes(byte_list)
+    
+    def read_all_tactile_sync(self, signed: bool = True) -> dict[str, np.ndarray]:
+        """
+        按块读取触觉数据（分段读取，每段不足则补零，不等待）。
+        :param signed: 是否转为 int16（带符号）
+        """
+        tactile_data = {}
+        MAX_REGISTERS_PER_READ = 125  # Modbus 每次最多读取的寄存器数
+
+        blocks = [
+            (3000, 370, [
+                ("pinky_tip",    0,   3, 3, False),
+                ("pinky_finger", 6,  12, 8, False),
+                ("pinky_middle", 102, 10, 8, False),
+            ]),
+            (3370, 370, [
+                ("ring_tip",     0,   3, 3, False),
+                ("ring_finger",  6,  12, 8, False),
+                ("ring_middle",  102, 10, 8, False),
+            ]),
+            (3740, 370, [
+                ("middle_tip",    0,   3, 3, False),
+                ("middle_finger", 6,  12, 8, False),
+                ("middle_middle", 102, 10, 8, False),
+            ]),
+            (4110, 370, [
+                ("index_tip",    0,   3, 3, False),
+                ("index_finger", 6,  12, 8, False),
+                ("index_middle", 102, 10, 8, False),
+            ]),
+            (4480, 420, [
+                ("thumb_tip",    0,   3, 3, False),
+                ("thumb_finger", 6,  12, 8, False),
+                ("thumb_middle", 102,  3, 3, False),
+                ("thumb_palm",   108, 12, 8, False),
+            ]),
+            (4900, 224, [
+                ("palm", 0, 8, 14, True),  # 翻转
+            ]),
+        ]
+
+        def read_register_range(start_addr, total_regs):
+            """分段读取一个块的数据"""
+            all_regs = []
+            for addr in range(start_addr, start_addr + total_regs, MAX_REGISTERS_PER_READ):
+                count = min(MAX_REGISTERS_PER_READ, start_addr + total_regs - addr)
+                regs = self.read_register(addr, count) or []
+                if len(regs) < count:
+                    regs.extend([0] * (count - len(regs)))  # 补 0
+                all_regs.extend(regs)
+            return all_regs
+
+        for base_addr, total_bytes, subparts in blocks:
+            reg_count = total_bytes // 2
+            regs = read_register_range(base_addr, reg_count)
+            byte_data = self._regs_to_bytes(regs)
+            arr = np.frombuffer(byte_data, dtype=np.int16 if signed else np.uint16)
+
+            for name, byte_offset, rows, cols, flip in subparts:
+                start_idx = byte_offset // 2
+                matrix = arr[start_idx:start_idx + rows * cols].reshape((rows, cols))
+                if flip:
+                    matrix = matrix[::-1]
+                tactile_data[name] = matrix
+
+        return tactile_data
+
+
     
     def read_force_angle_tactile(self) -> dict:
         """
@@ -176,6 +253,8 @@ class DexHandClient:
         # Step 3: 读取触觉（已有复杂逻辑）
         tactile = self.read_all_tactile_sync()
 
+        print(tactile)
+
         return {
             "timestamp": timestamp,
             "angles": angles,      # 原始角度值
@@ -191,7 +270,7 @@ class DexHandClient:
         if len(angles) != 6:
             raise ValueError("angles 必须是长度为6的列表")
         self.write6('angleSet', angles)
-        print(f"已设置手部角度: {angles}")
+        # print(f"已设置手部角度: {angles}")
 
     
 if __name__ == '__main__':
