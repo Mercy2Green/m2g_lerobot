@@ -60,6 +60,7 @@ import socket
 
 import time
 
+import draccus
 import numpy as np
 import rerun as rr
 
@@ -185,6 +186,8 @@ class RecordConfig:
     # Resume recording on an existing dataset.
     resume: bool = False
 
+    auto_mode: bool = False #### 自动数据收集。
+
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
         policy_path = parser.get_path_arg("policy")
@@ -283,6 +286,14 @@ def record(cfg: RecordConfig,robot: UR5eHand,listener, events) -> LeRobotDataset
     if cfg.display_data:
         _init_rerun(session_name="recording")
 
+
+    # ===== 新增：自动模式启动 =====
+    if cfg.auto_mode:
+        events["start_record"] = True
+        events["auto_mode"] = True
+        
+    # ============================
+
     teleop = None
     action_features = hw_to_dataset_features(robot.action_features, "action", cfg.dataset.video)
     obs_features = hw_to_dataset_features(robot.observation_features, "observation", cfg.dataset.video)
@@ -336,6 +347,15 @@ def record(cfg: RecordConfig,robot: UR5eHand,listener, events) -> LeRobotDataset
 
     while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
         log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
+        print("##########################################")
+        print(f"[INFO] 正在开始录制 Episode {recorded_episodes + 1}/{cfg.dataset.num_episodes} ...")
+        print("##########################################")
+
+        ###给一个准备时间
+        print("请准备好，3秒后开始录制...")
+        time.sleep(3)
+        print("开始录制...")
+
         record_loop(
             robot=robot,
             events=events,
@@ -350,7 +370,11 @@ def record(cfg: RecordConfig,robot: UR5eHand,listener, events) -> LeRobotDataset
 
         # Execute a few seconds without recording to give time to manually reset the environment
         # Skip reset for the last episode to be recorded
-        if not events["stop_recording"] and (
+
+        # if not events["stop_recording"] and (
+        #     (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
+        # ):
+        if (not events["stop_recording"]) and (not events.get("auto_mode", False)) and (
             (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
         ):
             log_say("Reset the environment", cfg.play_sounds)
@@ -394,6 +418,8 @@ def record(cfg: RecordConfig,robot: UR5eHand,listener, events) -> LeRobotDataset
 
 
 if __name__ == "__main__":
+
+    cfg = draccus.parse(config_class=RecordConfig)
     
     init_hand_force = 100
     init_hand_speed = 1000
@@ -416,9 +442,17 @@ if __name__ == "__main__":
     # hand = arm_hand.hand
 
     init_joint_pos = [-1.2, -1.6716, -1.5113, -3.71581, -1.29335, -2.890]
-
     arm_hand.robot1.moveJ(init_joint_pos, 0.3, 0.5, False)
-    start_flag = 0
+    time.sleep(2)  # 等待机器人到达初始位置
+
+    # 自动模式：直接开启
+    if cfg.auto_mode:
+        events["start_record"] = True
+        events["auto_mode"] = True
+        start_flag = 2
+    else:
+        start_flag = 0
+
     try:
         while True:
             if events["stop_recording"]:
@@ -432,7 +466,8 @@ if __name__ == "__main__":
                 arm_pose = tcp_pose.copy()
                 arm_pose[2] -= 0.2
             
-            if events["start_record"] and start_flag == 0:
+            # 手动或自动模式都可以进入录制
+            if (events["start_record"] or events.get("auto_mode", False)) and start_flag == 0:
                 start_flag = 1
 
             if start_flag == 0:

@@ -156,6 +156,7 @@ def init_keyboard_listener():
     events["start_record"] = False
     events["restart_arm"] = False
     events["quit"] = False
+    events["auto_mode"] = False
     events["control"] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0]   
     key_last_time = [0.0]  # 使用列表以便闭包可修改
     w_key_interval = 0.005  # 0.1秒
@@ -225,8 +226,9 @@ def init_keyboard_listener():
                 elif char == 'j':
                     handle_key_increment(events, 13, key_last_time, key_lock, w_key_interval)
                 elif char == 'c':
-                    # 更新 key_last_time 但不改变控制状态（例如：用于节奏控制）
-                    key_last_time[0] = time.monotonic()
+                    print("C key pressed. Start recording (auto mode)...")
+                    events["start_record"] = True
+                    events["auto_mode"] = True
 
         except Exception as e:
             print(f"Error handling key press: {e}")

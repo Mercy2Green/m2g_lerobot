@@ -134,6 +134,28 @@ class UR5eHand:
         self.start_flag1 = 0
 
 
+        ###### For auto mode ######
+        # ----- 自动 episode 状态机配置 -----
+        self.auto_state = "idle"  # 初始状态
+        self.auto_cfg = {
+            "z_down": 0.10,          # 相对下降距离(米)
+            "z_lift": 0.10,          # 从抓取高度向上抬升距离(米)
+            "wait_s": 3.0,           # 抬起后的等待时间(秒)
+            "down_dwell_s": 2,    # 到达抓取高度后的驻留时间
+            "grasp_dwell_s": 3,   # 抓取动作后的驻留时间
+            "down2_dwell_s": 2,   # 第二次下降后的驻留时间
+            "release_dwell_s": 3, # 放开动作后的驻留时间
+            "rise_dwell_s": 0.5,    # 回到悬停高度后的驻留时间
+            "grasp":   [400,400,400,400,700,0],      # 抓取时的手指角度
+            "release": [1000,1000,1000,1000,1000,0],  # 放开时的手指角度
+            "max_z": 0.5,           # Z 轴最大高度限制
+            "min_z": 0.1,           # Z 轴最小高度限制
+        }
+        self.auto_cache = {
+            "start_ref_z": None  # 自动模式首次进入时记录一次参考悬停高度
+        }
+
+
     def connect(self):
         pass
 
@@ -247,6 +269,10 @@ class UR5eHand:
         return {"webcam": self.pipeline}
     def get_action(self, events):
 
+        # --- 自动模式：覆盖手动按键 ---
+        if events.get("auto_mode", False):
+            return self._auto_action(events)
+
         if self.start_flag1 == 0:
             self.old_joint_pose, self.old_tcp_pose = self.get_old_action()
         joint_pos, tcp_pose = self.read()
@@ -314,7 +340,7 @@ class UR5eHand:
             new_tcp_pose[1] = (self.old_tcp_pose[1] + 0.12)
             print(f"new_tcp_pose[0] 和 new_tcp_pose[1] 超过限制，已调整为, {new_tcp_pose[1]}")
 
-        max_z = 0.35
+        max_z = 0.45
         min_z = 0.03
         
         if new_tcp_pose[2] < min_z:
@@ -377,6 +403,180 @@ class UR5eHand:
             joint_pos, old_tcp_pose = self.read()
             self.start_flag1 = 1
             return joint_pos, old_tcp_pose
+        
+    def _auto_action(self, events):
+        joint_pos, tcp_pose = self.read()
+        current_tcp = list(tcp_pose)
+        hand_pose = self.old_hand_pose
+
+        max_z = self.auto_cfg["max_z"]
+        min_z = self.auto_cfg["min_z"]
+
+
+        # ---------- 初始化 ----------
+        if self.auto_state in ("idle", "done"):
+            self.auto_state = "down"
+
+            # 只在自动模式的第一集记录一次悬停高度
+            if self.auto_cache.get("start_ref_z") is None:
+                self.auto_cache["start_ref_z"] = current_tcp[2]
+
+            start_ref_z = float(np.clip(self.auto_cache["start_ref_z"], min_z, max_z))
+            grasp_z = max(min_z, start_ref_z - self.auto_cfg["z_down"])
+            # 抬起高度回到悬停高度（若 z_lift != z_down，可以改为 grasp_z + z_lift 的 min/max 裁剪）
+            lift_z  = start_ref_z
+
+            self.auto_cache.update({
+                "grasp_z": grasp_z,
+                "lift_z":  lift_z,
+                "t0": None,             # wait用
+                "t_enter": time.time(), # 状态进入时间
+            })
+
+            hand_pose = self.auto_cfg["release"]
+            self.old_hand_pose = hand_pose
+
+        # def step_to_z(z_target, z_now, step=0.003):
+        #     if abs(z_target - z_now) <= step:
+        #         return z_target, True
+        #     return (z_now + step, False) if z_target > z_now else (z_now - step, False)
+        def step_to_z(z_target, z_now, base_step=0.003, max_step=0.015):
+            dist = abs(z_target - z_now)
+            step = min(max_step, max(base_step, dist / 2))  # 远时快，近时慢
+            if dist <= step:
+                return z_target, True
+            return (z_now + step, False) if z_target > z_now else (z_now - step, False)
+
+        state = self.auto_state
+
+        # ------- DOWN -------
+        if state == "down":
+            new_z, reached = step_to_z(self.auto_cache["grasp_z"], current_tcp[2])
+            target_tcp = current_tcp[:]
+            target_tcp[2] = float(np.clip(new_z, min_z, max_z))
+            hand_pose = self.auto_cfg["release"]
+
+            if reached:
+                if time.time() - self.auto_cache["t_enter"] >= self.auto_cfg.get("down_dwell_s", 0.0):
+                    self.auto_state = "grasp"
+                    self.auto_cache["t_enter"] = time.time()
+            else:
+                self.auto_cache["t_enter"] = time.time()
+
+            return self._build_action_from_tcp_and_hand(target_tcp, hand_pose, joint_pos)
+
+        # ------- GRASP -------
+        elif state == "grasp":
+            hand_pose = self.auto_cfg["grasp"]
+            self.old_hand_pose = hand_pose
+            target_tcp = current_tcp[:]
+            if time.time() - self.auto_cache["t_enter"] >= self.auto_cfg.get("grasp_dwell_s", 0.0):
+                self.auto_state = "lift"
+                self.auto_cache["t_enter"] = time.time()
+            return self._build_action_from_tcp_and_hand(target_tcp, hand_pose, joint_pos)
+
+        # ------- LIFT -------
+        elif state == "lift":
+            new_z, reached = step_to_z(self.auto_cache["lift_z"], current_tcp[2])
+            target_tcp = current_tcp[:]
+            target_tcp[2] = float(np.clip(new_z, min_z, max_z))
+            hand_pose = self.auto_cfg["grasp"]
+
+            if reached:
+                self.auto_state = "wait"
+                self.auto_cache["t0"] = time.time()
+                self.auto_cache["t_enter"] = time.time()
+            return self._build_action_from_tcp_and_hand(target_tcp, hand_pose, joint_pos)
+
+        # ------- WAIT -------
+        elif state == "wait":
+            hand_pose = self.auto_cfg["grasp"]
+            target_tcp = current_tcp[:]
+            if time.time() - self.auto_cache["t0"] >= self.auto_cfg["wait_s"]:
+                self.auto_state = "down2"
+                self.auto_cache["t_enter"] = time.time()
+            return self._build_action_from_tcp_and_hand(target_tcp, hand_pose, joint_pos)
+
+        # ------- DOWN2 -------
+        elif state == "down2":
+            new_z, reached = step_to_z(self.auto_cache["grasp_z"], current_tcp[2])
+            target_tcp = current_tcp[:]
+            target_tcp[2] = float(np.clip(new_z, min_z, max_z))
+            hand_pose = self.auto_cfg["grasp"]
+
+            if reached:
+                if time.time() - self.auto_cache["t_enter"] >= self.auto_cfg.get("down2_dwell_s", 0.0):
+                    self.auto_state = "release"
+                    self.auto_cache["t_enter"] = time.time()
+            else:
+                self.auto_cache["t_enter"] = time.time()
+
+            return self._build_action_from_tcp_and_hand(target_tcp, hand_pose, joint_pos)
+
+        # ------- RELEASE -------
+        elif state == "release":
+            hand_pose = self.auto_cfg["release"]
+            self.old_hand_pose = hand_pose
+            target_tcp = current_tcp[:]
+
+            if time.time() - self.auto_cache["t_enter"] >= self.auto_cfg.get("release_dwell_s", 0.0):
+                # 新增：放开后回到悬停高度，再结束
+                self.auto_state = "rise"
+                self.auto_cache["t_enter"] = time.time()
+            return self._build_action_from_tcp_and_hand(target_tcp, hand_pose, joint_pos)
+
+        # ------- RISE（新增）：回到悬停高度 -------
+        elif state == "rise":
+            start_ref_z = float(np.clip(self.auto_cache["start_ref_z"], min_z, max_z))
+            new_z, reached = step_to_z(start_ref_z, current_tcp[2])
+            target_tcp = current_tcp[:]
+            target_tcp[2] = float(np.clip(new_z, min_z, max_z))
+            hand_pose = self.auto_cfg["release"]
+
+            if reached and (time.time() - self.auto_cache["t_enter"] >= self.auto_cfg.get("rise_dwell_s", 0.0)):
+                self.auto_state = "done"
+                events["exit_early"] = True
+            return self._build_action_from_tcp_and_hand(target_tcp, hand_pose, joint_pos)
+
+        # ------- fallback -------
+        else:
+            self.auto_state = "idle"
+            target_tcp = current_tcp[:]
+            return self._build_action_from_tcp_and_hand(target_tcp, self.old_hand_pose, joint_pos)
+
+        
+    def _build_action_from_tcp_and_hand(self, target_tcp, hand_pose, current_q):
+        # 复制你当前 get_action 里 IK 与限幅那段逻辑（保持一致）
+        final_joint = self.robot1.getInverseKinematics(
+            target_tcp, current_q, max_position_error=10, max_orientation_error=10
+        )
+        if final_joint[3] > -0.5:
+            final_joint[3] = -0.6
+        elif final_joint[3] < -3.6:
+            final_joint[3] = -3.5
+
+        action = {
+            "joint_1.pos": final_joint[0],
+            "joint_2.pos": final_joint[1],
+            "joint_3.pos": final_joint[2],
+            "joint_4.pos": final_joint[3],
+            "joint_5.pos": final_joint[4],
+            "joint_6.pos": final_joint[5],
+            "tcp_1.pos": target_tcp[0],
+            "tcp_2.pos": target_tcp[1],
+            "tcp_3.pos": target_tcp[2],
+            "tcp_4.pos": target_tcp[3],
+            "tcp_5.pos": target_tcp[4],
+            "tcp_6.pos": target_tcp[5],
+            "hand_1.pos": hand_pose[0],
+            "hand_2.pos": hand_pose[1],
+            "hand_3.pos": hand_pose[2],
+            "hand_4.pos": hand_pose[3],
+            "hand_5.pos": hand_pose[4],
+            "hand_6.pos": hand_pose[5],
+        }
+        return action
+
 
 if __name__ == "__main__":
     robot = UR5eHand()

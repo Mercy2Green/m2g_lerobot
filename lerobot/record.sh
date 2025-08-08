@@ -23,4 +23,6 @@ python /home/hpx/peter_ws/m2g_lerobot/lerobot/record_m2g.py \
   --dataset.root=/media/hpx/newMemery/datasets/${DATA_SAVE_DIR} \
   --dataset.push_to_hub=False \
   --dataset.num_episodes=100 \
-  --dataset.single_task="Grab the toy and put it in the box"
+  --dataset.single_task="Grab the toy and put it in the box" \
+  --auto_mode=True \
+
