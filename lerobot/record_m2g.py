@@ -428,7 +428,7 @@ if __name__ == "__main__":
 
     cfg = draccus.parse(config_class=RecordConfig)
     
-    init_hand_force = 100
+    init_hand_force = 70
     init_hand_speed = 1000
 
     init_hand_force_list = [init_hand_force] * 6

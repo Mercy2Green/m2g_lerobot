@@ -14,6 +14,41 @@ import cv2
 from pymodbus.client.sync import ModbusTcpClient  # pip install pymodbus==2.5.3
 from lerobot.common.robots.dex_hand import DexHandClient
 
+def crop_fixed_region(color_image, x_start, y_start, crop_size=720):
+    """
+    从固定位置裁剪一个指定大小的区域（例如 720x720）
+
+    参数:
+        color_image: numpy.ndarray，形状 (H, W, C)
+        x_start: 裁剪起点的列坐标（横向）
+        y_start: 裁剪起点的行坐标（纵向）
+        crop_size: 裁剪边长，默认 720
+    返回:
+        裁剪后的图像
+    """
+        # ===== 裁剪固定区域到 720x720 =====
+    # 假设我们要裁剪的区域如下（示例 x_start=300, y_start=150）：
+    #
+    # 图像坐标系说明（OpenCV 默认）：
+    #   (0,0) ------------------> x 方向（列，右）
+    #     |
+    #     |
+    #     v
+    #   y 方向（行，下）
+    #
+    #   左上角像素坐标 (x_start, y_start) = (300, 150)
+    #   +-----------------------------------------+
+    #   |                                         |
+    #   |               裁剪区域                  |   ↑ y 增加方向
+    #   |             大小：720 x 720              |
+    #   |                                         |
+    #   +-----------------------------------------+
+    #   裁剪区域右下角像素坐标 = (x_start+720, y_start+720)
+    #
+    x_end = x_start + crop_size
+    y_end = y_start + crop_size
+    return color_image[y_start:y_end, x_start:x_end, :]
+
 
 class UR5eHand:
     """
@@ -75,7 +110,7 @@ class UR5eHand:
             "hand_force_4.pos":float,
             "hand_force_5.pos":float,
             "hand_force_6.pos":float,
-            "head_camera": (720,720,3),  # 假设相机分辨率为480x640
+            "head_camera": (720,720,3),  
             "wrist_camera":(720,720,3),
             "hand_tactile": dict[str, np.ndarray],  # 假设触觉数据为字典
         }
@@ -227,7 +262,10 @@ class UR5eHand:
         color_frame = frames1.get_color_frame()
         if color_frame:
             color_image = np.asanyarray(color_frame.get_data())
-            color_image = color_image[:, 240:-320, :]
+            # color_image = color_image[:, 240:-320, :]
+            # 假设红框左上角是 (X=300, Y=150)
+            color_image = crop_fixed_region(color_image, x_start=400, y_start=0, crop_size=720)
+
             color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
         else:
             color_image = np.zeros((720, 720, 3), dtype=np.uint8)
@@ -236,7 +274,9 @@ class UR5eHand:
         if frames2:
             color_frame = frames2.get_color_frame()
             color_image = self.frame_to_bgr_image(color_frame)
-            color_image = color_image[:, 240:-320, :]
+            # color_image = color_image[:, 240:-320, :]
+            # 假设红框左上角是 (X=300, Y=150)
+            color_image = crop_fixed_region(color_image, x_start=400, y_start=0, crop_size=720)
             color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
         else:
             color_image = np.zeros((720, 720, 3), dtype=np.uint8)
@@ -454,6 +494,7 @@ class UR5eHand:
 
         # ------- GRASP -------
         elif state == "grasp":
+            print("开始抓取")
             hand_pose = self.auto_cfg["grasp"]
             self.old_hand_pose = hand_pose
             target_tcp = current_tcp[:]
@@ -502,6 +543,7 @@ class UR5eHand:
 
         # ------- RELEASE -------
         elif state == "release":
+            print("开始放开")
             hand_pose = self.auto_cfg["release"]
             self.old_hand_pose = hand_pose
             target_tcp = current_tcp[:]
