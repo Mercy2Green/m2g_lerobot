@@ -102,6 +102,9 @@ class DexHandClient:
 
 
     def reset_force_feedback(self):
+
+        wait_time = 2
+
         print("[1] 读取当前角度...")
         current_angles = self.read_register(self.regdict['angleAct'], 6)
         print(f"当前角度: {current_angles}")
@@ -109,7 +112,7 @@ class DexHandClient:
         print("[2] 张开所有手指...")
         open_angles = [1000, 1000, 1000, 1000, 1000, 0]
         self.write_register(self.regdict['angleSet'], open_angles)
-        time.sleep(1)
+        time.sleep(wait_time)
 
         print("[3] 执行校准...")
         self.write_register(self.regdict['forceClb'], [1])
@@ -117,7 +120,7 @@ class DexHandClient:
 
         print("[4] 恢复原始姿态...")
         self.write_register(self.regdict['angleSet'], current_angles)
-        time.sleep(1)
+        time.sleep(wait_time)
         print("已恢复")
     
     def set_force(self, force_values = [100,100,100,100,100,100]):
@@ -132,22 +135,6 @@ class DexHandClient:
         self.write6('speedSet', speed_values)
         print(f"已设置速度值: {speed_values}")
 
-    # def read_all_tactile_sync(self) -> dict[str, np.ndarray]:
-    #     start_address = 3000
-    #     total_registers = 562
-    #     all_data = self.read_register(start_address, total_registers)
-
-    #     if not all_data or len(all_data) < total_registers:
-    #         raise RuntimeError("触觉数据读取失败或不完整")
-
-    #     tactile = {}
-    #     for name, (offset, rows, cols) in self.tactile_parts.items():
-    #         segment = all_data[offset:offset + rows * cols]
-    #         matrix = np.array(segment, dtype=np.uint16).reshape((rows, cols))
-    #         if name == "palm":
-    #             matrix = matrix[::-1]
-    #         tactile[name] = matrix
-    #     return tactile
     def _regs_to_bytes(self, regs):
         """寄存器列表 -> bytes，低位在前"""
         byte_list = []
@@ -309,8 +296,6 @@ class DexHandClient:
 
         # Step 3: 读取触觉（已有复杂逻辑）
         tactile = self.read_all_tactile_5finger()
-
-        print(tactile)
 
         return {
             "timestamp": timestamp,
