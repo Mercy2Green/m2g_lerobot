@@ -344,7 +344,7 @@ def record(cfg: RecordConfig,robot: UR5eHand,listener, events) -> LeRobotDataset
     # │    └─ continue 回到 while 起点
     # │
     # └─ 正常保存 episode，计数 +1
-
+    wait_time = 3
     while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
         log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
         print("##########################################")
@@ -352,8 +352,10 @@ def record(cfg: RecordConfig,robot: UR5eHand,listener, events) -> LeRobotDataset
         print("##########################################")
 
         ###给一个准备时间
-        print("请准备好，3秒后开始录制...")
-        time.sleep(3)
+        print(f"请准备好，{wait_time}秒后开始录制...")
+        for i in range(wait_time, 0, -1):
+            print(f"{i}秒")
+            time.sleep(1)
         print("开始录制...")
 
         record_loop(
@@ -380,7 +382,7 @@ def record(cfg: RecordConfig,robot: UR5eHand,listener, events) -> LeRobotDataset
             log_say("Reset the environment", cfg.play_sounds)
             events["control"] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
-            joint_pos = robot.init_arm_pose
+            joint_pos = robot.init_arm_joint
 
             robot.robot1.moveJ(joint_pos, 0.3, 0.5, False)
             record_loop(
@@ -399,6 +401,11 @@ def record(cfg: RecordConfig,robot: UR5eHand,listener, events) -> LeRobotDataset
             events["exit_early"] = False
             dataset.clear_episode_buffer()
             continue
+
+        if cfg.auto_mode:
+            print("[INFO] 自动模式复位到初始姿态以消除误差")
+            robot.robot1.moveJ(robot.init_arm_joint, 0.3, 0.5, False)
+            time.sleep(1)
 
         dataset.save_episode()
         recorded_episodes += 1
@@ -434,15 +441,16 @@ if __name__ == "__main__":
             hand_port=6000,
             init_force_values=init_hand_force_list,
             init_speed_values=init_hand_speed_list,
-            init_arm_pose= [-1.2, -1.6716, -1.5113, -3.71581, -1.29335, -2.890]
+            # init_arm_joint= [-1.2, -1.6716, -1.5113, -3.71581, -1.29335, -2.890]
+            ### For a cup
+            init_arm_joint=[-1.2074930475337116, -1.5226414808791908, -1.6494769486957281, -3.455183150582767, -1.297550940555798, -2.8931452639979724]
     )
 
     listener, events = init_keyboard_listener()
 
     # hand = arm_hand.hand
 
-    init_joint_pos = [-1.2, -1.6716, -1.5113, -3.71581, -1.29335, -2.890]
-    arm_hand.robot1.moveJ(init_joint_pos, 0.3, 0.5, False)
+    arm_hand.robot1.moveJ(arm_hand.init_arm_joint, 0.3, 0.5, False)
     time.sleep(2)  # 等待机器人到达初始位置
 
     # 自动模式：直接开启
@@ -486,17 +494,19 @@ if __name__ == "__main__":
                 ####### 用来测试
                 # action = arm_hand.get_action(events)
                 # tcp_targets = [action[f"tcp_{i+1}.pos"] for i in range(6)]
+                # joint_targets = [action[f"joint_{i+1}.pos"] for i in range(6)]
                 # velocity = 0.2
                 # acceleration = 0.3
                 # hands_action_angle = [action[f"hand_{i+1}.pos"] for i in range(6)]
                 # hand_data = arm_hand.hand.read_force_angle_tactile()
-                # hand_force = hand_data["force"]
-                # hand_angle = hand_data["angle"]
+                # hand_force = hand_data["forces"]
+                # hand_angle = hand_data["angles"]
                 # hand_tactile = hand_data["tactile"]
                 # print(f"手部力传感器数据: {hand_force}")
                 # print(f"手部角度传感器数据: {hand_angle}")
                 # print(f"手部触觉传感器数据: {hand_tactile}")
                 # print(f"ARM的tcp数据:{tcp_targets}")
+                # print(f"ARM的joint数据:{joint_targets}")
                 # arm_hand.robot1.moveL(tcp_targets, velocity, acceleration, False)
                 # # hand_control(ser,hands)
                 # arm_hand.hand.set_hand_angle(hands_action_angle)
