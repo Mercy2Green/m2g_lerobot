@@ -82,7 +82,7 @@ class UR5eHand:
             "hand_6.pos": float,  # 假设手指6的动作
         }
 
-    # 观测：6关节+相机
+    # 观测：6关节+相机+触觉
     @property
     def observation_features(self):
         return {

@@ -425,19 +425,53 @@ def hw_to_dataset_features(
     return features
 
 
+# def build_dataset_frame(
+#     ds_features: dict[str, dict], values: dict[str, Any], prefix: str
+# ) -> dict[str, np.ndarray]:
+#     frame = {}
+#     for key, ft in ds_features.items():
+#         if key in DEFAULT_FEATURES or not key.startswith(prefix):
+#             continue
+#         elif ft["dtype"] == "float32" and len(ft["shape"]) == 1:
+#             frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
+#         elif ft["dtype"] in ["image", "video"]:
+#             frame[key] = values[key.removeprefix(f"{prefix}.images.")]
+
+#     return frame
+
 def build_dataset_frame(
     ds_features: dict[str, dict], values: dict[str, Any], prefix: str
 ) -> dict[str, np.ndarray]:
+    """
+    将观测值 / 动作值按照数据集特征定义打包成单帧数据。
+    支持：
+        1. 普通 float32 标量（关节角、TCP）
+        2. 图像 / 视频 (720,720,3)
+        3. 手部触觉字典 hand_tactile: dict[str, np.ndarray]
+           会展开为 observation.hand_tactile.{key}
+    """
     frame = {}
     for key, ft in ds_features.items():
         if key in DEFAULT_FEATURES or not key.startswith(prefix):
             continue
+
+        # 关节、TCP等一维向量
         elif ft["dtype"] == "float32" and len(ft["shape"]) == 1:
             frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
+
+        # 图像或视频
         elif ft["dtype"] in ["image", "video"]:
             frame[key] = values[key.removeprefix(f"{prefix}.images.")]
 
+        # 手部触觉数据（字典）
+        elif "hand_tactile" in key:
+            tactile_dict = values.get("hand_tactile", {})
+            tactile_key = key.split(".")[-1]  # 从 observation.hand_tactile.taxel1 取 taxel1
+            if tactile_key in tactile_dict:
+                frame[key] = tactile_dict[tactile_key]
+
     return frame
+
 
 
 def get_features_from_robot(robot: Robot, use_videos: bool = True) -> dict:
