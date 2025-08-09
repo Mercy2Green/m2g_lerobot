@@ -168,13 +168,13 @@ class UR5eHand:
         self.old_arm_pose = []
         self.start_flag1 = 0
 
-
+        down_height = 0.14  # 初始下降高度
         ###### For auto mode ######
         # ----- 自动 episode 状态机配置 -----
         self.auto_state = "idle"  # 初始状态
         self.auto_cfg = {
-            "z_down": 0.10,          # 相对下降距离(米)
-            "z_lift": 0.10,          # 从抓取高度向上抬升距离(米)
+            "z_down": down_height,          # 相对下降距离(米)
+            "z_lift": down_height,          # 从抓取高度向上抬升距离(米)
             "wait_s": 3.0,           # 抬起后的等待时间(秒)
             "down_dwell_s": 2,       # 到达抓取高度后的驻留时间
             "grasp_dwell_s": 3,      # 抓取动作后的驻留时间
@@ -348,9 +348,9 @@ class UR5eHand:
         new_tcp_pose[2] = tcp_pose[2] + (new_control[4] * GAIN_Z_UP  - new_control[5] * GAIN_Z_DOWN) * MOVE_SCALE
 
         r_current = R.from_rotvec(tcp_pose[3:6])
-        theta_x = (new_control[8]*5 - new_control[9]*5) * 0.01 
-        theta_y = (new_control[10]*5 - new_control[11]*5) * 0.01 
-        theta_z = (new_control[12]*5 - new_control[13]*5) * 0.01 
+        theta_x = (new_control[8]*5 - new_control[9]*5) * 0.05 
+        theta_y = (new_control[10]*5 - new_control[11]*5) * 0.05 
+        theta_z = (new_control[12]*5 - new_control[13]*5) * 0.05 
         #第一位上下，第三位左右
         r_z90 = R.from_rotvec([theta_x, theta_y, theta_z])  # 绕 Z 轴旋转
         # 3. 组合旋转矩阵
@@ -494,7 +494,6 @@ class UR5eHand:
 
         # ------- GRASP -------
         elif state == "grasp":
-            print("开始抓取")
             hand_pose = self.auto_cfg["grasp"]
             self.old_hand_pose = hand_pose
             target_tcp = current_tcp[:]
@@ -543,7 +542,6 @@ class UR5eHand:
 
         # ------- RELEASE -------
         elif state == "release":
-            print("开始放开")
             hand_pose = self.auto_cfg["release"]
             self.old_hand_pose = hand_pose
             target_tcp = current_tcp[:]

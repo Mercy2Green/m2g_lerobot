@@ -187,6 +187,8 @@ class RecordConfig:
     resume: bool = False
 
     auto_mode: bool = False #### 自动数据收集。
+    tall_flag: bool = True
+    soft_flag: bool = True
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -427,25 +429,41 @@ def record(cfg: RecordConfig,robot: UR5eHand,listener, events) -> LeRobotDataset
 if __name__ == "__main__":
 
     cfg = draccus.parse(config_class=RecordConfig)
-    
-    init_hand_force = 70
-    init_hand_speed = 1000
+
+    #############init_arm_joint###################
+    # For a cup
+    tall_joint = [-1.2074930475337116, -1.5226414808791908, -1.6494769486957281, -3.455183150582767, -1.297550940555798, -2.8931452639979724]
+    # For a cube height
+    mid_joint = [-1.23796254793276, -1.644548078576559, -1.5001659393310538, -3.5, -1.377956692372459, -2.8083470503436505]
+    #############init force#######################
+    hard_force = 150
+    soft_force = 90
+
+    # 选择关节
+    if cfg.tall_flag:
+        init_arm_joint = tall_joint
+    else:
+        init_arm_joint = mid_joint
+
+    # 选择手部力
+    if cfg.soft_flag:
+        init_hand_force = soft_force
+    else:
+        init_hand_force = hard_force
 
     init_hand_force_list = [init_hand_force] * 6
+
+    init_hand_speed = 1000
     init_hand_speed_list = [init_hand_speed] * 6
 
-    # robot1= URRobotLeRobot()
     arm_hand = UR5eHand(
-            robot_ip="192.168.31.2", 
-            hand_ip="192.168.11.210",
-            hand_port=6000,
-            init_force_values=init_hand_force_list,
-            init_speed_values=init_hand_speed_list,
-            # init_arm_joint= [-1.2, -1.6716, -1.5113, -3.71581, -1.29335, -2.890]
-            ### For a cup
-            init_arm_joint=[-1.2074930475337116, -1.5226414808791908, -1.6494769486957281, -3.455183150582767, -1.297550940555798, -2.8931452639979724]
+        robot_ip="192.168.31.2", 
+        hand_ip="192.168.11.210",
+        hand_port=6000,
+        init_force_values=init_hand_force_list,
+        init_speed_values=init_hand_speed_list,
+        init_arm_joint=init_arm_joint
     )
-
     listener, events = init_keyboard_listener()
 
     # hand = arm_hand.hand
