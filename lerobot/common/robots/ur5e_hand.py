@@ -122,7 +122,9 @@ class UR5eHand:
             hand_port=6000,
             init_force_values=[100, 100, 100, 100, 100, 100],
             init_speed_values=[500, 500, 500, 500, 500, 500],
-            init_arm_joint = [-1.2, -1.6716, -1.5113, -3.71581, -1.29335, -2.890]
+            init_arm_joint = [-1.2, -1.6716, -1.5113, -3.71581, -1.29335, -2.890],
+            init_grasp_pose=[400, 400, 400, 400, 700, 0],
+            init_down_height=0.13
             ):
 
         self.robot1 = rtde_control.RTDEControlInterface(robot_ip)
@@ -136,7 +138,7 @@ class UR5eHand:
             force_values= init_force_values,
             speed_values= init_speed_values
         )  # 初始化Dex手,包括设置力和速度参数，并且reset力感受
-
+        print(f"Grasp pose: {init_grasp_pose}")
         #'''
         self.config1 = Config()
         self.pipeline1 = Pipeline()
@@ -168,7 +170,8 @@ class UR5eHand:
         self.old_arm_pose = []
         self.start_flag1 = 0
 
-        down_height = 0.14  # 初始下降高度
+        down_height = init_down_height  # 初始下降高度
+        print(f"Initial down height: {down_height}")
         ###### For auto mode ######
         # ----- 自动 episode 状态机配置 -----
         self.auto_state = "idle"  # 初始状态
@@ -181,7 +184,7 @@ class UR5eHand:
             "down2_dwell_s": 2,      # 第二次下降后的驻留时间
             "release_dwell_s": 3,    # 放开动作后的驻留时间
             "rise_dwell_s": 0.5,     # 回到悬停高度后的驻留时间
-            "grasp":   [400,400,400,400,700,0],      # 抓取时的手指角度
+            "grasp":   init_grasp_pose,      # 抓取时的手指角度
             "release": [1000,1000,1000,1000,1000,0], # 放开时的手指角度
             "max_z": 0.5,            # Z 轴最大高度限制
             "min_z": 0.1,            # Z 轴最小高度限制

@@ -54,6 +54,7 @@ python -m lerobot.record  --srobot.type=koch_follower  --srobot.port=/ttyUSB0   
 # debugpy.wait_for_client()
 
 ######这个文件负责整个记录流程。相当于导演编剧
+import ast
 import logging
 
 import socket
@@ -187,8 +188,9 @@ class RecordConfig:
     resume: bool = False
 
     auto_mode: bool = False #### 自动数据收集。
-    tall_flag: bool = True
-    soft_flag: bool = True
+    force: int = 100  # 手部力传感器的初始力值
+    grasp_pose: list[int] = None  # 手指抓取时的初始角度
+    down_height: float = 0.13  # 初始下降高度
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -432,29 +434,44 @@ if __name__ == "__main__":
 
     #############init_arm_joint###################
     # For a cup
-    tall_joint = [-1.2074930475337116, -1.5226414808791908, -1.6494769486957281, -3.455183150582767, -1.297550940555798, -2.8931452639979724]
+    init_arm_joint = [-1.2074930475337116, -1.5226414808791908, -1.6494769486957281, -3.455183150582767, -1.297550940555798, -2.8931452639979724]
     # For a cube height
     mid_joint = [-1.23796254793276, -1.644548078576559, -1.5001659393310538, -3.5, -1.377956692372459, -2.8083470503436505]
     #############init force#######################
     hard_force = 150
     soft_force = 90
 
-    # 选择关节
-    if cfg.tall_flag:
-        init_arm_joint = tall_joint
+    grasp_pose = cfg.grasp_pose if cfg.grasp_pose is not None else [400, 400, 400, 400, 700, 0]
+    if isinstance(cfg.grasp_pose, str):
+        grasp_pose = ast.literal_eval(cfg.grasp_pose)
     else:
-        init_arm_joint = mid_joint
+        grasp_pose = cfg.grasp_pose if cfg.grasp_pose is not None else [400, 400, 400, 400, 700, 0]
 
-    # 选择手部力
-    if cfg.soft_flag:
-        init_hand_force = soft_force
+    # # 选择关节
+    # if cfg.tall_flag:
+    #     init_arm_joint = tall_joint
+    # else:
+    #     init_arm_joint = mid_joint
+
+    # # 选择手部力
+    # if cfg.soft_flag:
+    #     init_hand_force = soft_force
+    # else:
+    #     init_hand_force = hard_force
+    if isinstance(cfg.force, str):
+        init_hand_force = ast.literal_eval(cfg.force)
     else:
-        init_hand_force = hard_force
+        init_hand_force = cfg.force if cfg.force is not None else 100  # 默认手部力传感器的初始力值
 
     init_hand_force_list = [init_hand_force] * 6
 
-    init_hand_speed = 1000
+    init_hand_speed = 500
     init_hand_speed_list = [init_hand_speed] * 6
+
+    if isinstance(cfg.down_height, str):
+        init_down_height = ast.literal_eval(cfg.down_height)
+    else:
+        init_down_height = cfg.down_height if cfg.down_height is not None else 0.13
 
     arm_hand = UR5eHand(
         robot_ip="192.168.31.2", 
@@ -462,7 +479,9 @@ if __name__ == "__main__":
         hand_port=6000,
         init_force_values=init_hand_force_list,
         init_speed_values=init_hand_speed_list,
-        init_arm_joint=init_arm_joint
+        init_arm_joint=init_arm_joint,
+        init_grasp_pose=grasp_pose,  # 手指抓取时的初始角度
+        init_down_height=init_down_height,  # 初始下降高度
     )
     listener, events = init_keyboard_listener()
 

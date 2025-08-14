@@ -29,7 +29,7 @@ task_10="Please pinch the mouse, lift it, and put it down."                    #
 TASK_NAME="task_7"       # 这里改任务名，例如 task_2, task_3 ...
 CURRENT_TASK=${!TASK_NAME}  # 取变量值
 # ===== Root folder =====
-ROOT_DIR="/home/hpx/peter_ws/m2g_DexTactileHand/data/${DATA_SAVE_DIR}"  # 数据保存的根目录
+ROOT_DIR="/home/hpx/peter_ws/data/pinch/${DATA_SAVE_DIR}"  # 数据保存的根目录
 SAVE_PATH="${ROOT_DIR}/${TASK_NAME}"  # 保存到 task_X 文件夹
 # rm -r SAVE_PATH
 # ===== Run data collection =====
