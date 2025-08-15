@@ -117,12 +117,12 @@ class UR5eHand:
 
     def __init__(
             self, 
+            init_arm_joint,
             robot_ip="192.168.31.2", 
             hand_ip="192.168.11.210",
             hand_port=6000,
             init_force_values=[100, 100, 100, 100, 100, 100],
             init_speed_values=[500, 500, 500, 500, 500, 500],
-            init_arm_joint = [-1.2, -1.6716, -1.5113, -3.71581, -1.29335, -2.890],
             init_grasp_pose=[400, 400, 400, 400, 700, 0],
             init_down_height=0.13
             ):
@@ -131,6 +131,7 @@ class UR5eHand:
         self.r_inter = rtde_receive.RTDEReceiveInterface(robot_ip)
 
         self.init_arm_joint = init_arm_joint  # 初始化机械臂姿态
+        self.init_grasp_pose = init_grasp_pose
 
         self.hand = DexHandClient(ip=hand_ip, port=hand_port)  # 初始化Dex手客户端
         self.hand.connect()  # 连接Dex手
@@ -404,7 +405,7 @@ class UR5eHand:
         if events["control"][6] > 0:
             print("手部抓取动作开始")
             time.sleep(0.01)
-            hand_pose = [400,400,400,400,700,0]
+            hand_pose = self.init_grasp_pose
             events["control"][6] = 0
             self.old_hand_pose = hand_pose
             events["control"][6] = 0

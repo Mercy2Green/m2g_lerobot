@@ -45,9 +45,10 @@ python /home/hpx/peter_ws/m2g_lerobot/lerobot/record_m2g.py \
   --dataset.push_to_hub=False \
   --dataset.num_episodes=20 \
   --dataset.single_task="$CURRENT_TASK" \
-  --auto_mode=True \
-  --force=80 \
+  --auto_mode=false \
+  --force=150 \
   --down_height=0.145 \
-  --grasp_pose="[400, 400, 400, 400, 600, 0]"
+  --grasp_pose="[900, 900, 900, 400, 600, 0]"
 
-
+#### 小指、无名指、中指、食指、大拇指、大拇指旋转
+#### 前五个，越大越松。最后一个越大越向外。

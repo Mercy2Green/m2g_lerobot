@@ -435,6 +435,7 @@ if __name__ == "__main__":
     #############init_arm_joint###################
     # For a cup
     init_arm_joint = [-1.2074930475337116, -1.5226414808791908, -1.6494769486957281, -3.455183150582767, -1.297550940555798, -2.8931452639979724]
+    ###
     # For a cube height
     mid_joint = [-1.23796254793276, -1.644548078576559, -1.5001659393310538, -3.5, -1.377956692372459, -2.8083470503436505]
     #############init force#######################
@@ -458,6 +459,7 @@ if __name__ == "__main__":
     #     init_hand_force = soft_force
     # else:
     #     init_hand_force = hard_force
+    
     if isinstance(cfg.force, str):
         init_hand_force = ast.literal_eval(cfg.force)
     else:
@@ -525,28 +527,28 @@ if __name__ == "__main__":
             elif start_flag == 2:
 
                 ######  用来记录
-                record(robot = arm_hand,listener = listener, events=events)
+                # record(robot = arm_hand,listener = listener, events=events)
                 ######  用来记录
 
                 ####### 用来测试
-                # action = arm_hand.get_action(events)
-                # tcp_targets = [action[f"tcp_{i+1}.pos"] for i in range(6)]
-                # joint_targets = [action[f"joint_{i+1}.pos"] for i in range(6)]
-                # velocity = 0.2
-                # acceleration = 0.3
-                # hands_action_angle = [action[f"hand_{i+1}.pos"] for i in range(6)]
-                # hand_data = arm_hand.hand.read_force_angle_tactile()
-                # hand_force = hand_data["forces"]
-                # hand_angle = hand_data["angles"]
-                # hand_tactile = hand_data["tactile"]
-                # print(f"手部力传感器数据: {hand_force}")
-                # print(f"手部角度传感器数据: {hand_angle}")
-                # print(f"手部触觉传感器数据: {hand_tactile}")
-                # print(f"ARM的tcp数据:{tcp_targets}")
-                # print(f"ARM的joint数据:{joint_targets}")
-                # arm_hand.robot1.moveL(tcp_targets, velocity, acceleration, False)
-                # # hand_control(ser,hands)
-                # arm_hand.hand.set_hand_angle(hands_action_angle)
+                action = arm_hand.get_action(events)
+                tcp_targets = [action[f"tcp_{i+1}.pos"] for i in range(6)]
+                joint_targets = [action[f"joint_{i+1}.pos"] for i in range(6)]
+                velocity = 0.2
+                acceleration = 0.3
+                hands_action_angle = [action[f"hand_{i+1}.pos"] for i in range(6)]
+                hand_data = arm_hand.hand.read_force_angle_tactile()
+                hand_force = hand_data["forces"]
+                hand_angle = hand_data["angles"]
+                hand_tactile = hand_data["tactile"]
+                print(f"手部力传感器数据: {hand_force}")
+                print(f"手部角度传感器数据: {hand_angle}")
+                print(f"手部触觉传感器数据: {hand_tactile}")
+                print(f"ARM的tcp数据:{tcp_targets}")
+                print(f"ARM的joint数据:{joint_targets}")
+                arm_hand.robot1.moveL(tcp_targets, velocity, acceleration, False)
+                # hand_control(ser,hands)
+                arm_hand.hand.set_hand_angle(hands_action_angle)
                 ####### 用来测试
 
     except KeyboardInterrupt:
