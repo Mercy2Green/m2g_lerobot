@@ -26,11 +26,13 @@ task_9="Please pinch the plastic medicine bottle, lift it, and put it down."   #
 task_10="Please pinch the mouse, lift it, and put it down."                    # 请捏起鼠标，抬起并放下。
 
 # ===== Choose which task to run =====
-TASK_NAME="task_7"       # 这里改任务名，例如 task_2, task_3 ...
+TASK_NAME="task_4"       # 这里改任务名，例如 task_2, task_3 ...
 CURRENT_TASK=${!TASK_NAME}  # 取变量值
 # ===== Root folder =====
 ROOT_DIR="/home/hpx/peter_ws/data/pinch/${DATA_SAVE_DIR}"  # 数据保存的根目录
 SAVE_PATH="${ROOT_DIR}/${TASK_NAME}"  # 保存到 task_X 文件夹
+
+
 # rm -r SAVE_PATH
 # ===== Run data collection =====
 python /home/hpx/peter_ws/m2g_lerobot/lerobot/record_m2g.py \
@@ -43,8 +45,12 @@ python /home/hpx/peter_ws/m2g_lerobot/lerobot/record_m2g.py \
   --dataset.push_to_hub=False \
   --dataset.num_episodes=20 \
   --dataset.single_task="$CURRENT_TASK" \
-  --tall_flag=True \
-  --soft_flag=True \
-  --auto_mode=True
+  --auto_mode=true \
+  --force=170 \
+  --down_height=0.145 \
+  --grasp_pose="[900, 900, 400, 400, 600, 0]"
+
+#### 小指、无名指、中指、食指、大拇指、大拇指旋转
+#### 前五个，越大越松。最后一个越大越向外。
 
 
