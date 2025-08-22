@@ -267,7 +267,6 @@ class DexHandClient:
 
         return tactile_data
 
-
     
     def read_force_angle_tactile(self) -> dict:
         """

@@ -301,6 +301,7 @@ class UR5eHand:
 
         # result = hand_control(self.hand,hand_targets)  # 控制手指动作
         self.hand.set_hand_angle(hand_targets)
+        
 
         # 返回实际执行的动作
         return action
