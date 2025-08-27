@@ -240,7 +240,12 @@ class UR5eHand:
             print("Unsupported color format: {}".format(color_format))
             return None
         return image 
-    
+
+    def obs_transform_gr00t(self, obs):
+
+        ### 将image帧变成4维的
+
+        ### 将
 
     def get_observation(self):
 
@@ -264,8 +269,6 @@ class UR5eHand:
         color_frame = frames1.get_color_frame()
         if color_frame:
             color_image = np.asanyarray(color_frame.get_data())
-            # color_image = color_image[:, 240:-320, :]
-            # 假设红框左上角是 (X=300, Y=150)
             color_image = crop_fixed_region(color_image, x_start=400, y_start=0, crop_size=720)
 
             color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
@@ -276,8 +279,6 @@ class UR5eHand:
         if frames2:
             color_frame = frames2.get_color_frame()
             color_image = self.frame_to_bgr_image(color_frame)
-            # color_image = color_image[:, 240:-320, :]
-            # 假设红框左上角是 (X=300, Y=150)
             color_image = crop_fixed_region(color_image, x_start=400, y_start=0, crop_size=720)
             color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
         else:
