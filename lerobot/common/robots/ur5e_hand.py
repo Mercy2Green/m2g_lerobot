@@ -241,51 +241,99 @@ class UR5eHand:
             return None
         return image 
 
-    def obs_transform_gr00t(self, obs):
+    def obs_perprocess(self, obs:dict, instruction:str=None):
 
-        ### 将image帧变成4维的
-
-        ### 将
-
+        ### 将指令加上
+        if instruction:
+            obs["annotation.human.task_description"] = instruction
+        else:
+            raise Warning("There is no instruciton")
+        
     def get_observation(self):
+        """
+        获取观测数据：
+        1. 相机图像
+        2. UR5e 机械臂状态
+        3. DexHand 灵巧手状态
+        """
+        obs = {}
 
-        #### UR机械臂状态读取 ####
-        joints, tcp_pose = self.read()
-        joint_dict = {f"joint_{i+1}.pos": float(joints[i]) for i in range(6)}
-        tcp_dict = {f"tcp_{i+1}.pos": float(tcp_pose[i]) for i in range(6)}
-
-        #### Dex手状态读取 ####
-        hand_data_dict = self.hand.read_force_angle_tactile()
-        obs = {
-            **joint_dict,
-            **tcp_dict,
-            **{f"hand_angle_{i+1}.pos": int(val) for i, val in enumerate(hand_data_dict["angles"])},
-            **{f"hand_force_{i+1}.pos": int(val) for i, val in enumerate(hand_data_dict["forces"])},
-            "hand_tactile": hand_data_dict["tactile"]
-        }
-
-        #### 相机数据读取 ####
+        # ===== 1. 相机数据 =====
+        # --- 腕部相机 ---
         frames1 = self.pipeline.wait_for_frames()
         color_frame = frames1.get_color_frame()
         if color_frame:
-            color_image = np.asanyarray(color_frame.get_data())
-            color_image = crop_fixed_region(color_image, x_start=400, y_start=0, crop_size=720)
-
-            color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
+            color_img = np.asanyarray(color_frame.get_data())
+            color_img = crop_fixed_region(color_img, x_start=400, y_start=0, crop_size=720)
+            color_img = cv2.cvtColor(color_img, cv2.COLOR_RGB2BGR)
         else:
-            color_image = np.zeros((720, 720, 3), dtype=np.uint8)
-        obs["wrist_camera"] = color_image
+            color_img = np.zeros((720, 720, 3), dtype=np.uint8)
+        obs["video.wrist_camera"] = color_img
+
+        # --- 外部相机 ---
         frames2 = self.pipeline1.wait_for_frames(1)
         if frames2:
             color_frame = frames2.get_color_frame()
-            color_image = self.frame_to_bgr_image(color_frame)
-            color_image = crop_fixed_region(color_image, x_start=400, y_start=0, crop_size=720)
-            color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
+            color_img = self.frame_to_bgr_image(color_frame)
+            color_img = crop_fixed_region(color_img, x_start=400, y_start=0, crop_size=720)
+            color_img = cv2.cvtColor(color_img, cv2.COLOR_RGB2BGR)
         else:
-            color_image = np.zeros((720, 720, 3), dtype=np.uint8)
-        obs["head_camera"]= color_image
+            color_img = np.zeros((720, 720, 3), dtype=np.uint8)
+        obs["video.webcam"] = color_img
 
-        return obs 
+        # ===== 2. UR 机械臂状态 =====
+        joints, tcp_pose = self.read()
+        obs.update({f"joint_{i+1}.pos": float(joints[i]) for i in range(6)})
+        obs.update({f"tcp_{i+1}.pos": float(tcp_pose[i]) for i in range(6)})
+
+        # ===== 3. DexHand 灵巧手状态 =====
+        hand_data = self.hand.read_force_angle_tactile()
+        obs.update({f"hand_angle_{i+1}.pos": int(val) for i, val in enumerate(hand_data["angles"])})
+        obs.update({f"hand_force_{i+1}.pos": int(val) for i, val in enumerate(hand_data["forces"])})
+        obs["hand_tactile"] = hand_data["tactile"]
+
+        return obs
+
+
+    # def get_observation(self):
+
+    #     #### UR机械臂状态读取 ####
+    #     joints, tcp_pose = self.read()
+    #     joint_dict = {f"joint_{i+1}.pos": float(joints[i]) for i in range(6)}
+    #     tcp_dict = {f"tcp_{i+1}.pos": float(tcp_pose[i]) for i in range(6)}
+
+    #     #### Dex手状态读取 ####
+    #     hand_data_dict = self.hand.read_force_angle_tactile()
+    #     obs = {
+    #         **joint_dict,
+    #         **tcp_dict,
+    #         **{f"hand_angle_{i+1}.pos": int(val) for i, val in enumerate(hand_data_dict["angles"])},
+    #         **{f"hand_force_{i+1}.pos": int(val) for i, val in enumerate(hand_data_dict["forces"])},
+    #         "hand_tactile": hand_data_dict["tactile"]
+    #     }
+
+    #     #### 相机数据读取 ####
+    #     frames1 = self.pipeline.wait_for_frames()
+    #     color_frame = frames1.get_color_frame()
+    #     if color_frame:
+    #         color_image = np.asanyarray(color_frame.get_data())
+    #         color_image = crop_fixed_region(color_image, x_start=400, y_start=0, crop_size=720)
+
+    #         color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
+    #     else:
+    #         color_image = np.zeros((720, 720, 3), dtype=np.uint8)
+    #     obs["video.wrist_camera"] = color_image
+    #     frames2 = self.pipeline1.wait_for_frames(1)
+    #     if frames2:
+    #         color_frame = frames2.get_color_frame()
+    #         color_image = self.frame_to_bgr_image(color_frame)
+    #         color_image = crop_fixed_region(color_image, x_start=400, y_start=0, crop_size=720)
+    #         color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
+    #     else:
+    #         color_image = np.zeros((720, 720, 3), dtype=np.uint8)
+    #     obs["video.webcam"]= color_image
+
+    #     return obs 
 
     def send_action(self, action: dict):
         # action: dict, key为joint_x.pos，value为角度（度）
