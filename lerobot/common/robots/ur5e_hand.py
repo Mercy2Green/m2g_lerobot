@@ -191,8 +191,6 @@ class UR5eHand:
             "min_z": 0.1,            # Z 轴最小高度限制
         }
 
-
-
     def connect(self):
         pass
 
