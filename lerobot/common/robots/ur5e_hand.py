@@ -241,58 +241,143 @@ class UR5eHand:
             return None
         return image 
 
-    def obs_perprocess(self, obs:dict, instruction:str=None):
+    def obs_preprocess(self, obs: dict, instruction: str = None):
+        """
+        通用预处理: 根据 val 的类型/形状决定怎么整理
+        - 图像 (H, W, C) -> (1, H, W, C)
+        - 标量 -> (1, 1)
+        - 一维向量 (D,) -> (1, D)
+        - 多维数组 -> (1, ...)
+        """
+        processed = {}
 
-        ### 将指令加上
-        if instruction:
-            obs["annotation.human.task_description"] = instruction
+        for key, val in obs.items():
+            arr = np.array(val)
+
+            # 图像: (H, W, C)
+            if arr.ndim == 3 and arr.shape[-1] in [1, 3, 4] and arr.dtype in [np.uint8, np.float32]:
+                processed[f"video.{key}"] = arr[None, ...]  # (1, H, W, C)
+
+            # 标量
+            elif arr.ndim == 0:
+                processed[f"state.{key}"] = arr.reshape(1, 1)
+
+            # 一维向量
+            elif arr.ndim == 1:
+                processed[f"state.{key}"] = arr[None, :]
+
+            # 其他多维数组
+            else:
+                processed[f"state.{key}"] = arr[None, ...]
+
+        # 指令文本
+        if instruction or instruction is not "":
+            processed["annotation.human.task_description"] = instruction
         else:
-            raise Warning("There is no instruciton")
+            raise Warning("There is no instruction")
+
+        return processed
+
+        
+    # def get_observation(self):
+    #     """
+    #     并行采集：
+    #     - 相机帧 (2 路)
+    #     - UR 机械臂状态
+    #     - DexHand 灵巧手状态
+    #     """
+    #     obs = {"timestamp": time.time()}
+
+    #     # 定义采集函数
+    #     def get_cam1():
+    #         frames = self.pipeline.wait_for_frames()
+    #         return frames.get_color_frame()
+
+    #     def get_cam2():
+    #         frames = self.pipeline1.wait_for_frames(1)
+    #         return frames.get_color_frame() if frames else None
+
+    #     def get_ur():
+    #         return self.read()  # (joints, tcp_pose)
+
+    #     def get_hand():
+    #         return self.hand.read_force_angle_tactile()
+
+    #     # 并行运行
+    #     cam1, cam2, (joints, tcp_pose), hand_data = run_parallel(
+    #         [get_cam1, get_cam2, get_ur, get_hand]
+    #     )
+
+    #     # === 相机处理 ===
+    #     def process_frame(frame):
+    #         if frame is None:
+    #             return np.zeros((720, 720, 3), dtype=np.uint8)
+    #         img = np.asanyarray(frame.get_data())
+    #         img = crop_fixed_region(img, x_start=400, y_start=0, crop_size=720)
+    #         return cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+
+    #     obs["video.wrist_camera"] = process_frame(cam1)
+    #     obs["video.webcam"]       = process_frame(cam2)
+
+    #     # === UR 状态 ===
+    #     obs.update({f"joint_{i+1}.pos": float(val) for i, val in enumerate(joints)})
+    #     obs.update({f"tcp_{i+1}.pos": float(val) for i, val in enumerate(tcp_pose)})
+
+    #     # === Hand 状态 ===
+    #     obs.update({f"hand_angle_{i+1}.pos": int(val) for i, val in enumerate(hand_data["angles"])})
+    #     obs.update({f"hand_force_{i+1}.pos": int(val) for i, val in enumerate(hand_data["forces"])})
+    #     obs["hand_tactile"] = hand_data["tactile"]
+
+    #     return obs
+
         
     def get_observation(self):
         """
-        获取观测数据：
+        获取观测数据（尽量同步）：
         1. 相机图像
         2. UR5e 机械臂状态
         3. DexHand 灵巧手状态
         """
-        obs = {}
+        obs = {"timestamp": time.time()}
+
+        # ===== 集中获取原始数据 =====
+        frames1 = self.pipeline.wait_for_frames()
+        frames2 = self.pipeline1.wait_for_frames(1)
+        joints, tcp_pose = self.read()
+        hand_data = self.hand.read_force_angle_tactile()
 
         # ===== 1. 相机数据 =====
         # --- 腕部相机 ---
-        frames1 = self.pipeline.wait_for_frames()
-        color_frame = frames1.get_color_frame()
-        if color_frame:
-            color_img = np.asanyarray(color_frame.get_data())
-            color_img = crop_fixed_region(color_img, x_start=400, y_start=0, crop_size=720)
-            color_img = cv2.cvtColor(color_img, cv2.COLOR_RGB2BGR)
+        frame = frames1.get_color_frame()
+        if frame:
+            img = np.asanyarray(frame.get_data())
+            img = crop_fixed_region(img, x_start=400, y_start=0, crop_size=720)
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         else:
-            color_img = np.zeros((720, 720, 3), dtype=np.uint8)
-        obs["video.wrist_camera"] = color_img
+            img = np.zeros((720, 720, 3), dtype=np.uint8)
+        obs["video.wrist_camera"] = img
 
         # --- 外部相机 ---
-        frames2 = self.pipeline1.wait_for_frames(1)
-        if frames2:
-            color_frame = frames2.get_color_frame()
-            color_img = self.frame_to_bgr_image(color_frame)
-            color_img = crop_fixed_region(color_img, x_start=400, y_start=0, crop_size=720)
-            color_img = cv2.cvtColor(color_img, cv2.COLOR_RGB2BGR)
+        frame = frames2.get_color_frame() if frames2 else None
+        if frame:
+            img = np.asanyarray(frame.get_data())
+            img = crop_fixed_region(img, x_start=400, y_start=0, crop_size=720)
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         else:
-            color_img = np.zeros((720, 720, 3), dtype=np.uint8)
-        obs["video.webcam"] = color_img
+            img = np.zeros((720, 720, 3), dtype=np.uint8)
+        obs["video.webcam"] = img
 
         # ===== 2. UR 机械臂状态 =====
-        joints, tcp_pose = self.read()
-        obs.update({f"joint_{i+1}.pos": float(joints[i]) for i in range(6)})
-        obs.update({f"tcp_{i+1}.pos": float(tcp_pose[i]) for i in range(6)})
+        obs.update({f"joint_{i+1}.pos": float(val) for i, val in enumerate(joints)})
+        obs.update({f"tcp_{i+1}.pos": float(val) for i, val in enumerate(tcp_pose)})
 
         # ===== 3. DexHand 灵巧手状态 =====
-        hand_data = self.hand.read_force_angle_tactile()
         obs.update({f"hand_angle_{i+1}.pos": int(val) for i, val in enumerate(hand_data["angles"])})
         obs.update({f"hand_force_{i+1}.pos": int(val) for i, val in enumerate(hand_data["forces"])})
         obs["hand_tactile"] = hand_data["tactile"]
 
         return obs
+
 
 
     # def get_observation(self):
