@@ -12,7 +12,8 @@ import rtde_control
 import rtde_receive
 import cv2
 from pymodbus.client.sync import ModbusTcpClient  # pip install pymodbus==2.5.3
-from lerobot.common.robots.dex_hand import DexHandClient
+# from m2g_lerobot.lerobot.common.robots.old_dex_hand import DexHandClient
+from m2g_dex_hand.dexhand.dex_hand import DexHandClient,TACTILE_KEYS
 
 def crop_fixed_region(color_image, x_start, y_start, crop_size=720):
     """
@@ -112,7 +113,8 @@ class UR5eHand:
             "hand_force_6.pos":float,
             "head_camera": (720,720,3),  
             "wrist_camera":(720,720,3),
-            "hand_tactile": dict[str, np.ndarray],  # 假设触觉数据为字典
+            "hand_tactile":{k: float for k in TACTILE_KEYS},  # 假设触觉数据为字典
+
         }
 
     def __init__(
@@ -377,8 +379,6 @@ class UR5eHand:
         obs["hand_tactile"] = hand_data["tactile"]
 
         return obs
-
-
 
     # def get_observation(self):
 

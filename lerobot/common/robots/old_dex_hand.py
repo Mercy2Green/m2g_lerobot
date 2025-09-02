@@ -2,6 +2,27 @@ from pymodbus.client.sync import ModbusTcpClient  # pip install pymodbus==2.5.3
 import time
 import numpy as np
 
+# ===== 宏变量: 触觉键名 =====
+FINGER_NAMES = ["pinky", "ring", "middle", "index", "thumb"]
+METRICS = [
+    "normal_force",
+    "normal_force_delta",
+    "tangential_force",
+    "tangential_force_delta",
+    "tangential_force_direction",
+    "approach_delta",
+]
+TACTILE_KEYS = [f"{f}_{m}" for f in FINGER_NAMES for m in METRICS]
+
+# ===== 手指对应的起始地址 =====
+FINGER_ADDR_MAP = {
+    "pinky": 3000,
+    "ring": 3058,
+    "middle": 3116,
+    "index": 3174,
+    "thumb": 3232,
+}
+
 
 class DexHandClient:
     regdict = {
@@ -21,30 +42,44 @@ class DexHandClient:
         'actionRun': 2322
     }
 
-    tactile_parts = {
-        "pinky_tip":      (0,    3,  3),
-        "pinky_finger":   (9,   12,  8),
-        "pinky_middle":   (105, 10,  8),
-        "ring_tip":       (185, 3,   3),
-        "ring_finger":    (194, 12,  8),
-        "ring_middle":    (290, 10,  8),
-        "middle_tip":     (370, 3,   3),
-        "middle_finger":  (379, 12,  8),
-        "middle_middle":  (475, 10,  8),
-        "index_tip":      (555, 3,   3),
-        "index_finger":   (564, 12,  8),
-        "index_middle":   (660, 10,  8),
-        "thumb_tip":      (740, 3,   3),
-        "thumb_finger":   (749, 12,  8),
-        "thumb_middle":   (845, 3,   3),
-        "thumb_palm":     (854, 12,  8),
-        "palm":           (950, 8,  14),  # 行倒序，可翻转
-    }
+    ### For 电阻手
+    # tactile_parts = {
+    #     "pinky_tip":      (0,    3,  3),
+    #     "pinky_finger":   (9,   12,  8),
+    #     "pinky_middle":   (105, 10,  8),
+    #     "ring_tip":       (185, 3,   3),
+    #     "ring_finger":    (194, 12,  8),
+    #     "ring_middle":    (290, 10,  8),
+    #     "middle_tip":     (370, 3,   3),
+    #     "middle_finger":  (379, 12,  8),
+    #     "middle_middle":  (475, 10,  8),
+    #     "index_tip":      (555, 3,   3),
+    #     "index_finger":   (564, 12,  8),
+    #     "index_middle":   (660, 10,  8),
+    #     "thumb_tip":      (740, 3,   3),
+    #     "thumb_finger":   (749, 12,  8),
+    #     "thumb_middle":   (845, 3,   3),
+    #     "thumb_palm":     (854, 12,  8),
+    #     "palm":           (950, 8,  14),  # 行倒序，可翻转
+    # }
 
     def __init__(self, ip: str = "192.168.11.210", port: int = 6000):
         self.ip = ip
         self.port = port
         self.client = ModbusTcpClient(ip, port)
+
+
+        # 每个手指的寄存器起始地址 (用户手册 §2.6.20)
+        self.finger_addr_map = {
+            "pinky": 3000,
+            "ring": 3058,
+            "middle": 3116,
+            "index": 3174,
+            "thumb": 3232,
+        }
+        self.byte_per_finger = 58
+        self.reg_per_finger = self.byte_per_finger // 2  # 1寄存器=2字节
+
 
     def connect(self):
         return self.client.connect()
@@ -143,51 +178,29 @@ class DexHandClient:
             hi = (reg >> 8) & 0xFF
             byte_list.extend([lo, hi])
         return bytes(byte_list)
-    
+
     def read_all_tactile_5finger(self) -> dict[str, str]:
         """
         读取 5 指触觉手的法向力、法向力变化值、切向力、切向力变化值、切向力方向、接近变化值
         返回字典: key 为 finger_metric，value 为字符串
         """
-        finger_names = ["pinky", "ring", "middle", "index", "thumb"]
-        base_addresses = [3000, 3058, 3116, 3174, 3232]
         byte_per_finger = 58
         reg_per_finger = byte_per_finger // 2  # 1寄存器 = 2字节
 
-        metrics = [
-            "normal_force",                # 法向力 (float32)
-            "normal_force_delta",           # 法向力变化值 (float32)
-            "tangential_force",             # 切向力 (float32)
-            "tangential_force_delta",       # 切向力变化值 (float32)
-            "tangential_force_direction",   # 切向力方向 (int16)
-            "approach_delta"                # 接近变化值 (float32)
-        ]
-
         result = {}
 
-        for finger, base_addr in zip(finger_names, base_addresses):
+        for finger, base_addr in FINGER_ADDR_MAP.items():
             regs = self.read_register(base_addr, reg_per_finger) or [0] * reg_per_finger
             raw_bytes = self._regs_to_bytes(regs)
 
             offset = 32  # 跳过原始值（8通道×4字节）
 
-            normal_force = str(np.frombuffer(raw_bytes[offset:offset+4], dtype='<f4')[0])
-            offset += 4
-
-            normal_force_delta = str(np.frombuffer(raw_bytes[offset:offset+4], dtype='<f4')[0])
-            offset += 4
-
-            tangential_force = str(np.frombuffer(raw_bytes[offset:offset+4], dtype='<f4')[0])
-            offset += 4
-
-            tangential_force_delta = str(np.frombuffer(raw_bytes[offset:offset+4], dtype='<f4')[0])
-            offset += 4
-
-            tangential_force_direction = str(np.frombuffer(raw_bytes[offset:offset+2], dtype='<i2')[0])
-            offset += 2
-
-            approach_delta = str(np.frombuffer(raw_bytes[offset:offset+4], dtype='<f4')[0])
-            offset += 4
+            normal_force = str(np.frombuffer(raw_bytes[offset:offset+4], dtype='<f4')[0]); offset += 4
+            normal_force_delta = str(np.frombuffer(raw_bytes[offset:offset+4], dtype='<f4')[0]); offset += 4
+            tangential_force = str(np.frombuffer(raw_bytes[offset:offset+4], dtype='<f4')[0]); offset += 4
+            tangential_force_delta = str(np.frombuffer(raw_bytes[offset:offset+4], dtype='<f4')[0]); offset += 4
+            tangential_force_direction = str(np.frombuffer(raw_bytes[offset:offset+2], dtype='<i2')[0]); offset += 2
+            approach_delta = str(np.frombuffer(raw_bytes[offset:offset+4], dtype='<f4')[0]); offset += 4
 
             # 用下划线连接 finger 和 metric
             result[f"{finger}_normal_force"] = normal_force
@@ -196,10 +209,7 @@ class DexHandClient:
             result[f"{finger}_tangential_force_delta"] = tangential_force_delta
             result[f"{finger}_tangential_force_direction"] = tangential_force_direction
             result[f"{finger}_approach_delta"] = approach_delta
-
         return result
-
-
     
     def read_all_tactile_full(self, signed: bool = True) -> dict[str, np.ndarray]:
         """
@@ -279,22 +289,19 @@ class DexHandClient:
         """
         timestamp = time.time()
 
-        # Step 1: 一次性读取角度和受力的寄存器
+        # Step 1: 读取角度和受力的寄存器
         angle_addr = self.regdict['angleAct']
         force_addr = self.regdict['forceAct']
 
-        # 假设中间不连续，分两次读
         angles = self.read_register(angle_addr, 6)
         forces_raw = self.read_register(force_addr, 6)
+        tactile = self.read_all_tactile_5finger()
 
         if len(angles) != 6 or len(forces_raw) != 6:
             raise RuntimeError("角度或受力寄存器读取失败")
 
         # Step 2: 力转换为有符号整数
         forces = [(v - 65536) if v > 32767 else v for v in forces_raw]
-
-        # Step 3: 读取触觉（已有复杂逻辑）
-        tactile = self.read_all_tactile_5finger()
 
         return {
             "timestamp": timestamp,
@@ -332,8 +339,8 @@ if __name__ == '__main__':
         dex.reset_force_feedback()
 
         # 读取触觉
-        tactile = dex.read_all_tactile_sync()
-        print("pinky_tip matrix:\n", tactile["pinky_tip"])
+        tactile = dex.read_force_angle_tactile()
+        # print("pinky_tip matrix:\n", tactile["pinky_tip"])
 
         dex.close()
     else:
